@@ -1,14 +1,21 @@
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
+import { z } from "zod";
 import type { AppEnv } from "./env";
 import { ApiError } from "./lib/errors";
 import { originCheck, sessionLoader } from "./middleware/auth";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
+import { cashRoutes } from "./routes/cash";
+import { receptionRoutes } from "./routes/reception";
 import { settingsRoutes } from "./routes/settings";
 import { setupRoutes } from "./routes/setup";
 import { shopRoutes } from "./routes/shops";
+import { walletRoutes } from "./routes/wallet";
+
+// 入力検証のエラーメッセージを日本語にする(画面にそのまま表示されるため)
+z.config(z.locales.ja());
 
 const api = new Hono<AppEnv>()
   .use("*", secureHeaders())
@@ -19,6 +26,9 @@ const api = new Hono<AppEnv>()
   .route("/settings", settingsRoutes)
   .route("/admin", adminRoutes)
   .route("/shops", shopRoutes)
+  .route("/wallet", walletRoutes)
+  .route("/reception", receptionRoutes)
+  .route("/cash", cashRoutes)
   .get("/health", (c) => c.json({ ok: true, time: Date.now() }));
 
 const app = new Hono<AppEnv>().route("/api", api);

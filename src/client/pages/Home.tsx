@@ -1,11 +1,13 @@
 import { Navigate } from "react-router-dom";
 import { ROLE_LABELS } from "@shared/roles";
+import { PayQrCard } from "@/components/PayQrCard";
 import { Shell } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/utils";
 import { AdminHome } from "./admin/AdminHome";
+import { ReceptionHome } from "./reception/ReceptionHome";
 import { ShopManagerHome } from "./shop/ShopManagerHome";
 
 function CustomerHome() {
@@ -28,10 +30,11 @@ function CustomerHome() {
           </div>
           <CardContent className="text-sm text-muted-foreground">{settings.currency.description}</CardContent>
         </Card>
+        <PayQrCard disabled={w?.status !== "ACTIVE"} />
         <Card>
           <CardHeader>
-            <CardTitle>支払いQR・履歴</CardTitle>
-            <CardDescription>QR決済と利用履歴は次の更新で追加されます。チャージは受付で行えます。</CardDescription>
+            <CardTitle>利用履歴</CardTitle>
+            <CardDescription>お支払いと利用履歴の画面は、店舗のレジが使えるようになる次の更新で追加されます。</CardDescription>
           </CardHeader>
         </Card>
       </div>
@@ -43,9 +46,8 @@ function CustomerHome() {
 function StaffPlaceholder() {
   const { me } = useAuth();
   if (!me) return null;
-  const isReception = me.user.role === "RECEPTION";
   return (
-    <Shell title={isReception ? "受付" : "POS"}>
+    <Shell title="POS">
       <Card>
         <CardHeader>
           <CardTitle>
@@ -53,9 +55,7 @@ function StaffPlaceholder() {
             {me.user.shopName && <span className="ml-2 text-sm font-normal text-muted-foreground">{me.user.shopName}</span>}
           </CardTitle>
           <CardDescription>
-            {isReception
-              ? "チャージ・払戻し・現金の締めの画面は次の更新で追加されます。交代するときは右上からログアウトしてください。"
-              : "POS会計の画面は次の更新で追加されます。"}
+            POS会計の画面は次の更新で追加されます。
           </CardDescription>
         </CardHeader>
       </Card>
@@ -72,8 +72,9 @@ export function HomePage() {
       return <AdminHome />;
     case "SHOP_MANAGER":
       return <ShopManagerHome />;
-    case "CLERK":
     case "RECEPTION":
+      return <ReceptionHome />;
+    case "CLERK":
       return <StaffPlaceholder />;
     case "CUSTOMER":
       return <CustomerHome />;

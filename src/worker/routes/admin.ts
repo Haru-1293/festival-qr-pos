@@ -9,7 +9,7 @@ import { auditStmt } from "../lib/audit";
 import { hashPassword } from "../lib/crypto";
 import { badRequest, notFound } from "../lib/errors";
 import { newId } from "../lib/ids";
-import { SETTING_KEYS, getCurrency, setSettingStmt } from "../lib/settings";
+import { SETTING_KEYS, getCurrency, getOperations, setSettingStmt } from "../lib/settings";
 import { buildReceptionQrIssue, createStaffUser, getUserBasic, listUsers } from "../lib/users";
 import { nicknameSchema, passwordSchema, staffLoginIdSchema } from "../lib/validation";
 import { requireAuth, requireRole } from "../middleware/auth";
@@ -287,6 +287,28 @@ export const adminRoutes = new Hono<AppEnv>()
     ]);
     return c.json({ currency: next });
   })
+  // 運用設定: 現金の締めの単位、顧客QRの有効時間
+  .get("/settings/operations", async (c) => c.json({ operations: await getOperations(c.env.DB) }))
+  .put(
+    "/settings/operations",
+    zValidator(
+      "json",
+      z.object({
+        closingMode: z.enum(["DAY", "SHIFT", "MANUAL"]),
+        qrTtlSeconds: z.number().int().min(60, "60秒以上にしてください").max(1800, "30分(1800秒)以内にしてください"),
+      }),
+    ),
+    async (c) => {
+      const auth = requireAuth(c);
+      const next = c.req.valid("json");
+      const before = await getOperations(c.env.DB);
+      await c.env.DB.batch([
+        setSettingStmt(c.env.DB, SETTING_KEYS.operations, next, auth.userId),
+        auditStmt(c.env.DB, { actor: auth, action: "settings.operations", targetType: "settings", targetId: SETTING_KEYS.operations, before, after: next }),
+      ]);
+      return c.json({ operations: next });
+    },
+  )
   .put(
     "/settings/festival-name",
     zValidator("json", z.object({ name: z.string().trim().min(1).max(50) })),

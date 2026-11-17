@@ -1,9 +1,13 @@
+import type { ClosingMode, OperationSettings } from "@shared/api";
 import { DEFAULT_CURRENCY, type CurrencySettings } from "@shared/currency";
 
 export const SETTING_KEYS = {
   currency: "currency",
   festivalName: "festival.name",
+  operations: "operations",
 } as const;
+
+export const DEFAULT_OPERATIONS: OperationSettings = { closingMode: "DAY", qrTtlSeconds: 300 };
 
 export async function getSetting<T>(db: D1Database, key: string, fallback: T): Promise<T> {
   const row = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first<{ value: string }>();
@@ -32,3 +36,10 @@ export async function getCurrency(db: D1Database): Promise<CurrencySettings> {
 export async function getFestivalName(db: D1Database): Promise<string> {
   return getSetting<string>(db, SETTING_KEYS.festivalName, "学園祭");
 }
+
+export async function getOperations(db: D1Database): Promise<OperationSettings> {
+  const saved = await getSetting<Partial<OperationSettings>>(db, SETTING_KEYS.operations, {});
+  return { ...DEFAULT_OPERATIONS, ...saved };
+}
+
+export type { ClosingMode };

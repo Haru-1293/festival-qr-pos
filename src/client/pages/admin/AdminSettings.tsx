@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import type { OperationSettings } from "@shared/api";
 import type { CurrencySettings } from "@shared/currency";
 import { formatMoney } from "@shared/currency";
 import { ErrorText, Field } from "@/components/Shell";
@@ -16,12 +17,28 @@ export function AdminSettings() {
   const [saved, setSaved] = useState<string | null>(null);
   const currency = useAction();
   const festival = useAction();
+  const [ops, setOps] = useState<OperationSettings>({ closingMode: "DAY", qrTtlSeconds: 300 });
+  const opsAction = useAction();
 
   useEffect(() => {
     api<{ currency: CurrencySettings }>("/admin/settings/currency")
       .then((r) => setC(r.currency))
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    api<{ operations: OperationSettings }>("/admin/settings/operations")
+      .then((r) => setOps(r.operations))
+      .catch(() => undefined);
+  }, []);
+
+  const saveOps = (e: FormEvent) => {
+    e.preventDefault();
+    void opsAction.run(async () => {
+      await api("/admin/settings/operations", { method: "PUT", body: ops });
+      setSaved("運用設定を保存しました");
+    });
+  };
 
   const saveCurrency = (e: FormEvent) => {
     e.preventDefault();
@@ -81,6 +98,35 @@ export function AdminSettings() {
             <p className="rounded-lg bg-muted px-3 py-2 text-sm">表示例: {formatMoney(500, c)}</p>
             <ErrorText message={currency.error} />
             <Button type="submit" disabled={currency.pending}>
+              保存
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card className="h-fit">
+        <CardHeader>
+          <CardTitle>運用設定</CardTitle>
+          <CardDescription>現金の締め方と、お客様の提示用QRの有効時間です。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={saveOps} className="flex flex-col gap-3">
+            <Field label="現金の締めの単位">
+              <select
+                className="h-12 rounded-lg border border-input bg-card px-3 text-base"
+                value={ops.closingMode}
+                onChange={(e) => setOps({ ...ops, closingMode: e.target.value as OperationSettings["closingMode"] })}
+              >
+                <option value="DAY">日次(全受付をまとめて管理者が締める)</option>
+                <option value="SHIFT">担当者交代ごと(受付が自分で締める)</option>
+                <option value="MANUAL">手動(管理者が必要なときに締める)</option>
+              </select>
+            </Field>
+            <Field label="提示用QRの有効時間(秒)" hint="60〜1800秒。既定は300秒(5分)">
+              <Input type="number" min={60} max={1800} value={ops.qrTtlSeconds} onChange={(e) => setOps({ ...ops, qrTtlSeconds: Number(e.target.value) })} required />
+            </Field>
+            <ErrorText message={opsAction.error} />
+            <Button type="submit" disabled={opsAction.pending}>
               保存
             </Button>
           </form>

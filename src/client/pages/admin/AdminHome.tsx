@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Shell } from "@/components/Shell";
 import { cn } from "@/lib/utils";
+import { AdminCash } from "./AdminCash";
 import { AdminSettings } from "./AdminSettings";
 import { AdminShops } from "./AdminShops";
 import { AdminUsers } from "./AdminUsers";
@@ -8,6 +9,7 @@ import { AdminUsers } from "./AdminUsers";
 const TABS = [
   { id: "shops", label: "店舗" },
   { id: "users", label: "スタッフ・利用者" },
+  { id: "cash", label: "現金" },
   { id: "settings", label: "設定" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -35,6 +37,7 @@ export function AdminHome() {
         </div>
         {tab === "shops" && <AdminShops />}
         {tab === "users" && <AdminUsers />}
+        {tab === "cash" && <AdminCash />}
         {tab === "settings" && <AdminSettings />}
       </div>
     </Shell>
