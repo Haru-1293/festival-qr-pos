@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "festival-qr-pos",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-11-01",
+  "observability": { "enabled": true },
+  // クライアント(React)は Vite のビルド結果が静的アセットとして配信される。
+  // /api/* だけ Worker を先に実行し、それ以外は SPA として index.html へフォールバックする。
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "festival-qr-pos",
+      // TODO: `wrangler d1 create festival-qr-pos` で作成した ID に置き換える(README 参照)
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+  // 必要なシークレット(wrangler secret put / ダッシュボードで設定):
+  //   SETUP_TOKEN  : 初回の全体管理者作成にだけ使うトークン(作成後は削除してよい)
+  //   PIN_PEPPER   : 物理カードPINのハッシュに混ぜる秘密値(32文字以上のランダム文字列)
+}

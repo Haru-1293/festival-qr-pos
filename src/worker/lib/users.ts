@@ -1,0 +1,151 @@
+import type { UserDto } from "@shared/api";
+import type { Role } from "@shared/roles";
+import type { AuthContext } from "../env";
+import { auditStmt } from "./audit";
+import { randomToken, sha256Hex } from "./crypto";
+import { conflict } from "./errors";
+import { newId } from "./ids";
+
+export function isUniqueViolation(e: unknown, column: string): boolean {
+  return e instanceof Error && e.message.includes("UNIQUE constraint failed") && e.message.includes(column);
+}
+
+interface NewStaff {
+  role: "CLERK" | "SHOP_MANAGER" | "ADMIN";
+  shopId: string | null;
+  loginId: string;
+  passwordHash: string;
+  nickname: string;
+}
+
+/** 店員・店舗責任者・全体管理者を作成する(ログインID重複は 409) */
+export async function createStaffUser(db: D1Database, actor: AuthContext, s: NewStaff): Promise<string> {
+  const id = newId();
+  try {
+    await db.batch([
+      db
+        .prepare(
+          `INSERT INTO users (id, role, login_id, password_hash, nickname, shop_id, status, created_at, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)`,
+        )
+        .bind(id, s.role, s.loginId, s.passwordHash, s.nickname, s.shopId, Date.now(), actor.userId),
+      auditStmt(db, {
+        actor,
+        action: "user.create",
+        targetType: "user",
+        targetId: id,
+        after: { role: s.role, loginId: s.loginId, nickname: s.nickname, shopId: s.shopId },
+      }),
+    ]);
+  } catch (e) {
+    if (isUniqueViolation(e, "users.login_id")) throw conflict("このログインIDはすでに使われています", "LOGIN_ID_TAKEN");
+    throw e;
+  }
+  return id;
+}
+
+export const RECEPTION_QR_PREFIX = "FES1:R:";
+
+/**
+ * 受付担当者のログインQRを(再)発行する SQL 文と生トークン。
+ * 既存の有効QRは失効し、そのユーザーの全セッションを破棄する。
+ * 生トークンは呼び出し元がレスポンスで1回だけ返し、DB・ログには残さない。
+ */
+export async function buildReceptionQrIssue(
+  db: D1Database,
+  actor: AuthContext,
+  userId: string,
+  reason: string | null,
+): Promise<{ token: string; stmts: D1PreparedStatement[] }> {
+  const token = `${RECEPTION_QR_PREFIX}${randomToken(24)}`;
+  const hash = await sha256Hex(token);
+  const now = Date.now();
+  return {
+    token,
+    stmts: [
+      db
+        .prepare(
+          `UPDATE reception_login_qrs SET revoked_at = ?, revoked_by = ?, revoke_reason = ?
+            WHERE user_id = ? AND revoked_at IS NULL`,
+        )
+        .bind(now, actor.userId, reason ?? "再発行", userId),
+      db
+        .prepare("INSERT INTO token_tombstones (token_hash, kind, created_at) VALUES (?, 'RECEPTION_LOGIN_QR', ?)")
+        .bind(hash, now),
+      db
+        .prepare("INSERT INTO reception_login_qrs (token_hash, user_id, issued_at, issued_by) VALUES (?, ?, ?, ?)")
+        .bind(hash, userId, now, actor.userId),
+      db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
+      auditStmt(db, {
+        actor,
+        action: "reception_qr.issue",
+        targetType: "user",
+        targetId: userId,
+        reason: reason ?? undefined,
+      }),
+    ],
+  };
+}
+
+interface UserRow {
+  id: string;
+  role: Role;
+  login_id: string | null;
+  nickname: string;
+  shop_id: string | null;
+  shop_name: string | null;
+  status: UserDto["status"];
+  created_at: number;
+  qr_issued_at: number | null;
+}
+
+export async function listUsers(
+  db: D1Database,
+  filter: { role?: Role; shopId?: string; roles?: Role[] },
+): Promise<UserDto[]> {
+  const where: string[] = ["u.status <> 'DELETED'"];
+  const args: unknown[] = [];
+  if (filter.role) {
+    where.push("u.role = ?");
+    args.push(filter.role);
+  }
+  if (filter.roles?.length) {
+    where.push(`u.role IN (${filter.roles.map(() => "?").join(",")})`);
+    args.push(...filter.roles);
+  }
+  if (filter.shopId) {
+    where.push("u.shop_id = ?");
+    args.push(filter.shopId);
+  }
+  const { results } = await db
+    .prepare(
+      `SELECT u.id, u.role, u.login_id, u.nickname, u.shop_id, s.display_name AS shop_name, u.status, u.created_at,
+              (SELECT q.issued_at FROM reception_login_qrs q WHERE q.user_id = u.id AND q.revoked_at IS NULL) AS qr_issued_at
+         FROM users u LEFT JOIN shops s ON s.id = u.shop_id
+        WHERE ${where.join(" AND ")}
+        ORDER BY u.created_at DESC LIMIT 500`,
+    )
+    .bind(...args)
+    .all<UserRow>();
+  return results.map((r) => ({
+    id: r.id,
+    role: r.role,
+    loginId: r.login_id,
+    nickname: r.nickname,
+    shopId: r.shop_id,
+    shopName: r.shop_name,
+    status: r.status,
+    createdAt: r.created_at,
+    receptionQrIssuedAt: r.qr_issued_at,
+  }));
+}
+
+export async function getUserBasic(
+  db: D1Database,
+  id: string,
+): Promise<{ id: string; role: Role; shop_id: string | null; status: string; nickname: string } | null> {
+  return db
+    .prepare("SELECT id, role, shop_id, status, nickname FROM users WHERE id = ? AND status <> 'DELETED'")
+    .bind(id)
+    .first();
+}

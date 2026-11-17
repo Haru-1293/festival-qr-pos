@@ -1,0 +1,3 @@
+# ローカル開発用の秘密値(.dev.vars にコピーして使う。Git には入らない)
+SETUP_TOKEN=change-me-local-setup-token
+PIN_PEPPER=change-me-local-pepper-at-least-32-characters
