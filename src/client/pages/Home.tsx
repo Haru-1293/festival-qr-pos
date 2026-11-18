@@ -1,5 +1,6 @@
 import { Navigate } from "react-router-dom";
 import { ROLE_LABELS } from "@shared/roles";
+import { HistoryCard } from "@/components/HistoryCard";
 import { PayQrCard } from "@/components/PayQrCard";
 import { Shell } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
@@ -32,12 +33,7 @@ function CustomerHome() {
           <CardContent className="text-sm text-muted-foreground">{settings.currency.description}</CardContent>
         </Card>
         <PayQrCard disabled={w?.status !== "ACTIVE"} />
-        <Card>
-          <CardHeader>
-            <CardTitle>利用履歴</CardTitle>
-            <CardDescription>お支払いと利用履歴の画面は、店舗のレジが使えるようになる次の更新で追加されます。</CardDescription>
-          </CardHeader>
-        </Card>
+        <HistoryCard balance={w?.balance} />
       </div>
     </Shell>
   );

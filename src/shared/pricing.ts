@@ -19,3 +19,17 @@ export function cutAmount(price: number, rule: PriceCutRule | null): number {
 export function salePrice(price: number, rule: PriceCutRule | null): number {
   return price - cutAmount(price, rule);
 }
+
+/**
+ * 数量を返金するときの金額。割引・値下げ後の実支払額(linePaid)を数量で按分する。
+ * 端数は切り捨て、その行の残り数量をすべて返すときは残額ぴったりにして、累計が実支払額と一致するようにする。
+ */
+export function refundAmountForLine(
+  l: { quantity: number; linePaid: number; refundedAmount: number; refundedQuantity: number },
+  qty: number,
+): number {
+  const remainQty = l.quantity - l.refundedQuantity;
+  const remainPaid = l.linePaid - l.refundedAmount;
+  if (remainQty <= 0 || qty >= remainQty) return remainPaid;
+  return Math.floor((remainPaid * qty) / remainQty);
+}

@@ -264,3 +264,73 @@ export interface PayStatus {
   expiresAt: number;
   result: PayResult | null;
 }
+
+// ---------- 返金・履歴 ----------
+export type OrderStatus = "PAID" | "PARTIALLY_REFUNDED" | "REFUNDED";
+export type RefundKind = "FULL" | "PARTIAL" | "ARBITRARY";
+
+export interface OrderSummary {
+  id: string;
+  orderNo: string;
+  paidAt: number;
+  customerNickname: string | null;
+  total: number;
+  refundedTotal: number;
+  status: OrderStatus;
+}
+
+export interface OrderLineDto {
+  id: string;
+  productId: string | null;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  listUnitPrice: number | null;
+  priceCutName: string | null;
+  linePaid: number;
+  refundedQuantity: number;
+  refundedAmount: number;
+}
+
+export interface RefundDto {
+  id: string;
+  kind: RefundKind;
+  amount: number;
+  reason: string;
+  operatorNickname: string | null;
+  createdAt: number;
+  lines: { name: string; quantity: number; amount: number; restoreStock: boolean }[];
+}
+
+export interface OrderDetail extends OrderSummary {
+  shopId: string;
+  shopName: string;
+  clerkNickname: string | null;
+  /** 返金できる残りの金額(実支払額 − 返金済みの合計) */
+  refundable: number;
+  lines: OrderLineDto[];
+  refunds: RefundDto[];
+}
+
+export interface RefundResult {
+  refundId: string;
+  kind: RefundKind;
+  amount: number;
+  refundedTotal: number;
+  refundable: number;
+  balanceAfter: number;
+  status: OrderStatus;
+  replayed?: boolean;
+}
+
+export interface HistoryItem {
+  id: string;
+  kind: "CHARGE" | "CHARGE_CORRECTION" | "PAYMENT" | "REFUND" | "PAYOUT" | "ADJUSTMENT";
+  amount: number;
+  balanceAfter: number;
+  createdAt: number;
+  /** 決済・返金のときの店舗名 */
+  shopName: string | null;
+  /** 決済・返金のときの取引番号 */
+  orderNo: string | null;
+}
