@@ -45,19 +45,25 @@ export async function createStaffUser(db: D1Database, actor: AuthContext, s: New
 }
 
 export const RECEPTION_QR_PREFIX = "FES1:R:";
+export const CLERK_QR_PREFIX = "FES1:C:";
+
+/** ログインQRを使える役割(受付担当者・店員)。トークンの先頭で役割を区別する */
+export const LOGIN_QR_PREFIX = { RECEPTION: RECEPTION_QR_PREFIX, CLERK: CLERK_QR_PREFIX } as const;
 
 /**
- * 受付担当者のログインQRを(再)発行する SQL 文と生トークン。
+ * 受付担当者・店員のログインQRを(再)発行する SQL 文と生トークン。
+ * テーブル名・墓標の種別は受付用の名前のままだが、店員のQRも同じ仕組みで扱う。
  * 既存の有効QRは失効し、そのユーザーの全セッションを破棄する。
  * 生トークンは呼び出し元がレスポンスで1回だけ返し、DB・ログには残さない。
  */
-export async function buildReceptionQrIssue(
+export async function buildLoginQrIssue(
   db: D1Database,
   actor: AuthContext,
   userId: string,
+  role: keyof typeof LOGIN_QR_PREFIX,
   reason: string | null,
 ): Promise<{ token: string; stmts: D1PreparedStatement[] }> {
-  const token = `${RECEPTION_QR_PREFIX}${randomToken(24)}`;
+  const token = `${LOGIN_QR_PREFIX[role]}${randomToken(24)}`;
   const hash = await sha256Hex(token);
   const now = Date.now();
   return {
@@ -78,13 +84,17 @@ export async function buildReceptionQrIssue(
       db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
       auditStmt(db, {
         actor,
-        action: "reception_qr.issue",
+        action: role === "CLERK" ? "clerk_qr.issue" : "reception_qr.issue",
         targetType: "user",
         targetId: userId,
         reason: reason ?? undefined,
       }),
     ],
   };
+}
+
+export function buildReceptionQrIssue(db: D1Database, actor: AuthContext, userId: string, reason: string | null) {
+  return buildLoginQrIssue(db, actor, userId, "RECEPTION", reason);
 }
 
 interface UserRow {
@@ -136,16 +146,16 @@ export async function listUsers(
     shopName: r.shop_name,
     status: r.status,
     createdAt: r.created_at,
-    receptionQrIssuedAt: r.qr_issued_at,
+    loginQrIssuedAt: r.qr_issued_at,
   }));
 }
 
 export async function getUserBasic(
   db: D1Database,
   id: string,
-): Promise<{ id: string; role: Role; shop_id: string | null; status: string; nickname: string } | null> {
+): Promise<{ id: string; role: Role; shop_id: string | null; status: string; nickname: string; login_id: string | null } | null> {
   return db
-    .prepare("SELECT id, role, shop_id, status, nickname FROM users WHERE id = ? AND status <> 'DELETED'")
+    .prepare("SELECT id, role, shop_id, status, nickname, login_id FROM users WHERE id = ? AND status <> 'DELETED'")
     .bind(id)
     .first();
 }

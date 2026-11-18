@@ -43,7 +43,7 @@ export interface UserDto {
   status: UserStatus;
   createdAt: number;
   /** 受付担当者のみ: 有効なログインQRの発行日時(無ければ null) */
-  receptionQrIssuedAt: number | null;
+  loginQrIssuedAt: number | null;
 }
 
 /** 受付ログインQRの発行結果。生トークンはこのレスポンスでしか返さない */

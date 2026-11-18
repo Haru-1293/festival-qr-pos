@@ -87,8 +87,8 @@ export function LoginPage() {
         <Link to="/register" className="font-semibold text-secondary-foreground underline-offset-2 hover:underline">
           はじめての方はこちら(新規登録)
         </Link>
-        <Link to="/reception-login" className="text-muted-foreground underline-offset-2 hover:underline">
-          受付担当者のログイン(QR)
+        <Link to="/qr-login" className="text-muted-foreground underline-offset-2 hover:underline">
+          受付担当者・店員のQRログイン
         </Link>
         <p className="text-xs text-muted-foreground">パスワードを忘れた場合は、受付または運営にお声がけください。</p>
         {needsSetup && (
@@ -155,7 +155,7 @@ export function RegisterPage() {
   );
 }
 
-/** 受付担当者のQRログイン。カメラ読み取り、または QR の文字列を貼り付けて入力する */
+/** 受付担当者・店員のQRログイン。カメラ読み取り、または QR の文字列を貼り付けて入力する */
 export function ReceptionLoginPage() {
   const { me, setMe } = useAuth();
   const [token, setToken] = useState("");
@@ -166,7 +166,7 @@ export function ReceptionLoginPage() {
   const login = useCallback(
     (value: string) => {
       void run(async () => {
-        setMe(await api<MeResponse>("/auth/reception-login", { body: { token: value.trim() } }));
+        setMe(await api<MeResponse>("/auth/qr-login", { body: { token: value.trim() } }));
         navigate("/", { replace: true });
       });
     },
@@ -184,7 +184,7 @@ export function ReceptionLoginPage() {
   if (me) return <Navigate to="/" replace />;
 
   return (
-    <AuthFrame title="受付ログイン" description="担当者のログイン用QRを読み取ってください。交代するときはログアウトしてください">
+    <AuthFrame title="QRでログイン" description="配布されたログイン用QRを読み取ってください(受付担当者・店員)。交代するときはログアウトしてください">
       {scanning && <QrScanner onScan={onScan} onClose={() => setScanning(false)} />}
       <Button size="lg" onClick={() => setScanning(true)} disabled={pending || !scannerSupported()}>
         <ScanLine /> QRを読み取る
@@ -200,7 +200,7 @@ export function ReceptionLoginPage() {
         className="flex flex-col gap-3"
       >
         <Field label="QRの文字列(読み取れない場合)">
-          <Input value={token} onChange={(e) => setToken(e.target.value)} autoCapitalize="none" autoCorrect="off" placeholder="FES1:R:…" />
+          <Input value={token} onChange={(e) => setToken(e.target.value)} autoCapitalize="none" autoCorrect="off" placeholder="FES1:…" />
         </Field>
         <ErrorText message={error} />
         <Button type="submit" variant="outline" disabled={pending || !token.trim()}>

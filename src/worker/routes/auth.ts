@@ -1,5 +1,5 @@
 import { zv as zValidator } from "../lib/validate";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import type { MeResponse, WalletSummary } from "@shared/api";
 import type { Role } from "@shared/roles";
@@ -14,6 +14,7 @@ import { requireAuth } from "../middleware/auth";
 import { emailSchema, nicknameSchema, passwordSchema } from "../lib/validation";
 
 export const RECEPTION_QR_PATTERN = /^FES1:R:[A-Za-z0-9_-]{32}$/;
+export const CLERK_QR_PATTERN = /^FES1:C:[A-Za-z0-9_-]{32}$/;
 
 interface MeRow {
   id: string;
@@ -53,6 +54,33 @@ export async function loadMe(db: D1Database, auth: Pick<AuthContext, "userId">):
     },
     wallet,
   };
+}
+
+/** トークンの先頭(R/C)と、QRを持つユーザーの役割が一致したときだけログインさせる */
+async function loginWithQr(c: Context<AppEnv>, token: string) {
+  const role: Role | null = RECEPTION_QR_PATTERN.test(token) ? "RECEPTION" : CLERK_QR_PATTERN.test(token) ? "CLERK" : null;
+  if (!role) throw unauthorized("ログインQRが無効です", "INVALID_QR");
+  const db = c.env.DB;
+  const user = await db
+    .prepare(
+      `SELECT u.id, u.role FROM reception_login_qrs q JOIN users u ON u.id = q.user_id
+        WHERE q.token_hash = ? AND q.revoked_at IS NULL AND u.status = 'ACTIVE' AND u.role = ?`,
+    )
+    .bind(await sha256Hex(token), role)
+    .first<{ id: string; role: Role }>();
+  if (!user) throw unauthorized("ログインQRが無効、または失効しています", "INVALID_QR");
+  const session = await buildSessionStmts(db, user, deviceLabelFrom(c));
+  await db.batch([
+    ...session.stmts,
+    auditStmt(db, {
+      actor: { userId: user.id, role: user.role },
+      action: role === "CLERK" ? "auth.clerk_qr_login" : "auth.reception_login",
+      targetType: "user",
+      targetId: user.id,
+    }),
+  ]);
+  writeSessionCookie(c, session.token, user.role);
+  return c.json(await loadMe(db, { userId: user.id }));
 }
 
 export const authRoutes = new Hono<AppEnv>()
@@ -118,27 +146,14 @@ export const authRoutes = new Hono<AppEnv>()
       return c.json(await loadMe(db, { userId: user.id }));
     },
   )
-  // 受付担当者の恒久ログインQRでのログイン。同じ担当者の古い端末はログアウトされる
-  .post("/reception-login", zValidator("json", z.object({ token: z.string().trim().max(100) })), async (c) => {
-    const { token } = c.req.valid("json");
-    if (!RECEPTION_QR_PATTERN.test(token)) throw unauthorized("ログインQRが無効です", "INVALID_QR");
-    const db = c.env.DB;
-    const user = await db
-      .prepare(
-        `SELECT u.id, u.role FROM reception_login_qrs q JOIN users u ON u.id = q.user_id
-          WHERE q.token_hash = ? AND q.revoked_at IS NULL AND u.status = 'ACTIVE' AND u.role = 'RECEPTION'`,
-      )
-      .bind(await sha256Hex(token))
-      .first<{ id: string; role: Role }>();
-    if (!user) throw unauthorized("ログインQRが無効、または失効しています", "INVALID_QR");
-    const session = await buildSessionStmts(db, user, deviceLabelFrom(c));
-    await db.batch([
-      ...session.stmts,
-      auditStmt(db, { actor: { userId: user.id, role: user.role }, action: "auth.reception_login", targetType: "user", targetId: user.id }),
-    ]);
-    writeSessionCookie(c, session.token, user.role);
-    return c.json(await loadMe(db, { userId: user.id }));
-  })
+  // 受付担当者・店員のログインQRでのログイン(`/reception-login` は旧名の別名)。
+  // 受付担当者は同じ担当者の古い端末がログアウトされる。店員は複数端末で使える
+  .post("/qr-login", zValidator("json", z.object({ token: z.string().trim().max(100) })), (c) =>
+    loginWithQr(c, c.req.valid("json").token),
+  )
+  .post("/reception-login", zValidator("json", z.object({ token: z.string().trim().max(100) })), (c) =>
+    loginWithQr(c, c.req.valid("json").token),
+  )
   .post("/logout", async (c) => {
     const auth = c.get("auth");
     if (auth) {

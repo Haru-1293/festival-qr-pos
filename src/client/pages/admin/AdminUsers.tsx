@@ -1,8 +1,8 @@
-import { KeyRound, Printer, QrCode, UserPlus } from "lucide-react";
+import { KeyRound, QrCode, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { ReceptionQrIssued, ShopDto, UserDto } from "@shared/api";
 import { ROLE_LABELS, type Role } from "@shared/roles";
-import { QrCodeView } from "@/components/QrCodeView";
+import { LoginQrDialog } from "@/components/LoginQrDialog";
 import { ErrorText, Field } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,32 +20,6 @@ const FILTERS: { id: Role | "ALL"; label: string }[] = [
   { id: "CUSTOMER", label: "顧客" },
   { id: "ADMIN", label: "全体管理者" },
 ];
-
-/** 発行直後だけ表示する受付ログインQR。生トークンはサーバーに保存されないため、閉じると再表示できない */
-function ReceptionQrDialog({ issued, nickname, onClose }: { issued: ReceptionQrIssued; nickname: string; onClose: () => void }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 print:static print:bg-white print:p-0">
-      <div className="w-full max-w-sm rounded-2xl bg-card p-5 shadow-xl print:max-w-none print:shadow-none">
-        <h2 className="text-lg font-bold">{nickname} さんのログインQR</h2>
-        <p className="mt-1 text-sm text-muted-foreground print:hidden">
-          この画面を閉じると再表示できません。印刷して本人に渡してください(紛失時は再発行できます)。
-        </p>
-        <div className="my-4 flex justify-center">
-          <QrCodeView value={issued.token} size={260} />
-        </div>
-        <p className="break-all rounded-lg bg-muted p-2 text-center font-mono text-xs print:hidden">{issued.token}</p>
-        <div className="mt-4 flex gap-2 print:hidden">
-          <Button variant="outline" className="flex-1" onClick={() => window.print()}>
-            <Printer /> 印刷
-          </Button>
-          <Button className="flex-1" onClick={onClose}>
-            閉じる
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export function AdminUsers() {
   const [users, setUsers] = useState<UserDto[]>([]);
@@ -133,7 +107,7 @@ export function AdminUsers() {
 
   return (
     <div className="flex flex-col gap-4">
-      {qr && <ReceptionQrDialog issued={qr.issued} nickname={qr.nickname} onClose={() => setQr(null)} />}
+      {qr && <LoginQrDialog issued={qr.issued} nickname={qr.nickname} onClose={() => setQr(null)} />}
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
@@ -246,13 +220,13 @@ export function AdminUsers() {
                     <Button size="sm" variant="outline" onClick={() => reissueQr(u)} disabled={row.pending}>
                       <QrCode className="!size-4" /> QR再発行
                     </Button>
-                    {u.receptionQrIssuedAt && (
+                    {u.loginQrIssuedAt && (
                       <Button size="sm" variant="outline" onClick={() => revokeQr(u)} disabled={row.pending}>
                         QR失効
                       </Button>
                     )}
                     <span className="self-center text-xs text-muted-foreground">
-                      {u.receptionQrIssuedAt ? `QR発行 ${formatDateTime(u.receptionQrIssuedAt)}` : "有効なQRなし"}
+                      {u.loginQrIssuedAt ? `QR発行 ${formatDateTime(u.loginQrIssuedAt)}` : "有効なQRなし"}
                     </span>
                   </>
                 )}

@@ -11,7 +11,8 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
-          <Route path="/reception-login" element={<ReceptionLoginPage />} />
+          <Route path="/qr-login" element={<ReceptionLoginPage />} />
+          <Route path="/reception-login" element={<Navigate to="/qr-login" replace />} />
           <Route path="/setup" element={<SetupPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

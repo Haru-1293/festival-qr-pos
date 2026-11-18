@@ -96,6 +96,36 @@ req $ANON POST /api/auth/login '{"loginId":"taro@example.com","password":"anothe
 req $ADMIN GET /api/auth/me; AID=$(jget "['user']['id']")
 req $ADMIN PATCH /api/admin/users/$AID/status '{"status":"SUSPENDED"}'; check "自分自身は停止できない" 400
 
+echo "== 店員のQRログイン・ID変更 =="
+C2=$TMP/c2.jar
+req $MGR POST /api/shops/$SHOP_A/staff/$CLERK_ID/qr '{}'; check "店舗責任者が店員のログインQRを発行" 200; CT1=$(jget "['token']")
+case "$CT1" in FES1:C:*) pass=$((pass+1)); echo "  ok   店員QRの接頭辞は FES1:C:";; *) fail=$((fail+1)); echo "  FAIL 接頭辞: $CT1";; esac
+req $MGR POST /api/shops/$SHOP_B/staff/$CLERK_ID/qr '{}'; check "他店舗経由では発行できない" 403
+req $CLERK POST /api/auth/login '{"loginId":"clerk-a1","password":"newclerkpass"}'; check "店員ログイン(ID・パスワード)" 200
+req $CLERK POST /api/shops/$SHOP_A/staff/$CLERK_ID/qr '{}'; check "店員は自分のQRを発行できない" 403
+req $CLERK POST /api/auth/qr-login "{\"token\":\"$CT1\"}"; check "店員がQRでログイン" 200
+req $CLERK GET /api/auth/me; check "QRログイン後のセッション" 200; echo "     $(body | head -c 120)"
+req $C2 POST /api/auth/qr-login "{\"token\":\"$CT1\"}"; check "店員は複数端末で同時ログインできる" 200
+req $CLERK GET /api/auth/me; check "1台目もログインのまま" 200
+req $ANON POST /api/auth/qr-login "{\"token\":\"FES1:R:${CT1#FES1:C:}\"}"; check "接頭辞を書き換えたQRは使えない" 401
+req $MGR POST /api/shops/$SHOP_A/staff/$CLERK_ID/qr/revoke '{"reason":"紛失"}'; check "ログインQRを失効" 200
+req $CLERK GET /api/auth/me; check "失効で店員のセッションは破棄" 401
+req $ANON POST /api/auth/qr-login "{\"token\":\"$CT1\"}"; check "失効したQRは使えない" 401
+req $MGR POST /api/shops/$SHOP_A/staff/$CLERK_ID/qr '{}'; check "QR再発行" 200; CT2=$(jget "['token']")
+req $ANON POST /api/auth/qr-login "{\"token\":\"$CT1\"}"; check "旧QRは再発行後も使えない" 401
+req $CLERK POST /api/auth/qr-login "{\"token\":\"$CT2\"}"; check "新QRでログイン" 200
+req $MGR PATCH /api/shops/$SHOP_A/staff/$CLERK_ID/login-id '{"loginId":"clerk-a1-new"}'; check "店員のログインIDを変更" 200
+req $CLERK GET /api/auth/me; check "ID変更でセッション破棄" 401
+req $ANON POST /api/auth/login '{"loginId":"clerk-a1","password":"newclerkpass"}'; check "旧IDではログインできない" 401
+req $CLERK POST /api/auth/login '{"loginId":"clerk-a1-new","password":"newclerkpass"}'; check "新IDでログイン" 200
+req $MGR PATCH /api/shops/$SHOP_A/staff/$CLERK_ID/login-id '{"loginId":"admin"}'; check "他のアカウントと重複するIDは409" 409
+req $MGR PATCH /api/shops/$SHOP_B/staff/$CLERK_ID/login-id '{"loginId":"zzz-clerk"}'; check "他店舗経由のID変更は403" 403
+req $CLERK PATCH /api/shops/$SHOP_A/staff/$CLERK_ID/login-id '{"loginId":"zzz-clerk"}'; check "店員はID変更できない" 403
+req $MGR PATCH /api/shops/$SHOP_A/staff/$CLERK_ID/status '{"status":"SUSPENDED"}'; check "店員を停止" 200
+req $ANON POST /api/auth/qr-login "{\"token\":\"$CT2\"}"; check "停止中はQRログイン不可" 401
+req $MGR POST /api/shops/$SHOP_A/staff/$CLERK_ID/qr '{}'; check "停止中は発行できない" 400
+req $MGR PATCH /api/shops/$SHOP_A/staff/$CLERK_ID/status '{"status":"ACTIVE"}'; check "店員を再開" 200
+
 echo "== 設定 =="
 req $ANON GET /api/settings/public; check "公開設定" 200; echo "     $(body)"
 req $ADMIN PUT /api/admin/settings/currency '{"name":"学祭ポイント","shortName":"フェスポ","symbolPosition":"after","allowDecimals":false,"yenPerUnit":1,"description":"1フェスポ=1円"}'; check "通貨変更" 200

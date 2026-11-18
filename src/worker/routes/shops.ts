@@ -3,9 +3,10 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { auditStmt } from "../lib/audit";
+import type { ReceptionQrIssued } from "@shared/api";
 import { hashPassword } from "../lib/crypto";
-import { badRequest, notFound } from "../lib/errors";
-import { createStaffUser, getUserBasic, listUsers } from "../lib/users";
+import { badRequest, conflict, notFound } from "../lib/errors";
+import { buildLoginQrIssue, createStaffUser, getUserBasic, isUniqueViolation, listUsers } from "../lib/users";
 import { nicknameSchema, passwordSchema, staffLoginIdSchema } from "../lib/validation";
 import { assertShopAccess, requireAuth, requireRole } from "../middleware/auth";
 
@@ -90,6 +91,77 @@ export const shopRoutes = new Hono<AppEnv>()
           before: { status: target.status },
           after: { status },
         }),
+      ]);
+      return c.json({ ok: true });
+    },
+  )
+  // 店員のログインIDの変更(IDは店舗責任者が設定する)。ログイン中の端末はログアウトされる
+  .patch(
+    "/:shopId/staff/:userId/login-id",
+    staffParam,
+    zValidator("json", z.object({ loginId: staffLoginIdSchema })),
+    async (c) => {
+      const auth = requireAuth(c);
+      const { shopId, userId } = c.req.valid("param");
+      assertShopAccess(auth, shopId);
+      const { loginId } = c.req.valid("json");
+      const target = await getUserBasic(c.env.DB, userId);
+      if (!target || target.role !== "CLERK" || target.shop_id !== shopId) throw notFound("店員が見つかりません");
+      try {
+        await c.env.DB.batch([
+          c.env.DB.prepare("UPDATE users SET login_id = ? WHERE id = ?").bind(loginId, userId),
+          c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
+          auditStmt(c.env.DB, {
+            actor: auth,
+            action: "user.change_login_id",
+            targetType: "user",
+            targetId: userId,
+            before: { loginId: target.login_id },
+            after: { loginId },
+          }),
+        ]);
+      } catch (e) {
+        if (isUniqueViolation(e, "users.login_id")) throw conflict("このログインIDはすでに使われています", "LOGIN_ID_TAKEN");
+        throw e;
+      }
+      return c.json({ ok: true });
+    },
+  )
+  // 店員のログインQRの発行・再発行。古いQRは即時失効し、ログイン中の端末もログアウトされる
+  .post(
+    "/:shopId/staff/:userId/qr",
+    staffParam,
+    zValidator("json", z.object({ reason: z.string().trim().max(200).optional() })),
+    async (c) => {
+      const auth = requireAuth(c);
+      const { shopId, userId } = c.req.valid("param");
+      assertShopAccess(auth, shopId);
+      const target = await getUserBasic(c.env.DB, userId);
+      if (!target || target.role !== "CLERK" || target.shop_id !== shopId) throw notFound("店員が見つかりません");
+      if (target.status !== "ACTIVE") throw badRequest("停止中の店員にはQRを発行できません");
+      const qr = await buildLoginQrIssue(c.env.DB, auth, userId, "CLERK", c.req.valid("json").reason ?? "再発行");
+      await c.env.DB.batch(qr.stmts);
+      return c.json({ userId, token: qr.token } satisfies ReceptionQrIssued);
+    },
+  )
+  // 店員のログインQRの即時失効(再発行はしない)
+  .post(
+    "/:shopId/staff/:userId/qr/revoke",
+    staffParam,
+    zValidator("json", z.object({ reason: z.string().trim().min(1, "理由を入力してください").max(200) })),
+    async (c) => {
+      const auth = requireAuth(c);
+      const { shopId, userId } = c.req.valid("param");
+      assertShopAccess(auth, shopId);
+      const { reason } = c.req.valid("json");
+      const target = await getUserBasic(c.env.DB, userId);
+      if (!target || target.role !== "CLERK" || target.shop_id !== shopId) throw notFound("店員が見つかりません");
+      await c.env.DB.batch([
+        c.env.DB.prepare(
+          "UPDATE reception_login_qrs SET revoked_at = ?, revoked_by = ?, revoke_reason = ? WHERE user_id = ? AND revoked_at IS NULL",
+        ).bind(Date.now(), auth.userId, reason, userId),
+        c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
+        auditStmt(c.env.DB, { actor: auth, action: "clerk_qr.revoke", targetType: "user", targetId: userId, reason }),
       ]);
       return c.json({ ok: true });
     },
