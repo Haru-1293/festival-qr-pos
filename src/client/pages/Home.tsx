@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/utils";
 import { AdminHome } from "./admin/AdminHome";
+import { PosCatalog } from "./pos/PosCatalog";
 import { ReceptionHome } from "./reception/ReceptionHome";
 import { ShopManagerHome } from "./shop/ShopManagerHome";
 
@@ -75,7 +76,7 @@ export function HomePage() {
     case "RECEPTION":
       return <ReceptionHome />;
     case "CLERK":
-      return <StaffPlaceholder />;
+      return me?.user.shopId ? <PosCatalog shopId={me.user.shopId} shopName={me.user.shopName ?? ""} /> : <StaffPlaceholder />;
     case "CUSTOMER":
       return <CustomerHome />;
   }

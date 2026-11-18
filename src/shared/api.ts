@@ -140,3 +140,62 @@ export interface OperationSettings {
   closingMode: ClosingMode;
   qrTtlSeconds: number;
 }
+
+// ---------- 商品・値下げ(店舗) ----------
+import type { PriceCutMethod } from "./pricing";
+
+export type SaleMode = "BOTH" | "SINGLE_ONLY" | "SET_ONLY";
+export type ProductStatus = "ACTIVE" | "STOPPED" | "ARCHIVED";
+
+export interface TagDto {
+  id: string;
+  name: string;
+  color: string | null;
+  active: boolean;
+}
+
+export interface ProductDto {
+  id: string;
+  name: string;
+  /** 定価。セット限定の非売品は null */
+  price: number | null;
+  /** 値下げ後の価格(値下げがなければ定価と同じ)。定価が null なら null */
+  salePrice: number | null;
+  cutAmount: number;
+  description: string | null;
+  saleMode: SaleMode;
+  status: ProductStatus;
+  manualSoldOut: boolean;
+  trackStock: boolean;
+  stockQty: number | null;
+  soldOut: boolean;
+  soldOutReason: "MANUAL" | "STOCK" | null;
+  discountable: boolean;
+  sortOrder: number;
+  tags: { id: string; name: string; color: string | null }[];
+}
+
+export type PriceCutState = "RUNNING" | "SCHEDULED" | "ENDED" | "STOPPED";
+
+export interface PriceCutDto {
+  id: string;
+  name: string;
+  method: PriceCutMethod;
+  value: number;
+  startsAt: number | null;
+  endsAt: number | null;
+  state: PriceCutState;
+  createdAt: number;
+}
+
+export type CatalogResponse =
+  | { changed: false; signature: string; serverTime: number }
+  | {
+      changed: true;
+      signature: string;
+      serverTime: number;
+      shopName: string;
+      /** いま適用中の値下げ。なければ null */
+      cut: PriceCutDto | null;
+      products: ProductDto[];
+    };
