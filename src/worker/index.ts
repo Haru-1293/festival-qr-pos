@@ -41,7 +41,7 @@ app.notFound((c) => c.json({ error: { code: "NOT_FOUND", message: "見つかり�
 
 app.onError((err, c) => {
   if (err instanceof ApiError) {
-    return c.json({ error: { code: err.code, message: err.message } }, err.status);
+    return c.json({ error: { code: err.code, message: err.message, ...(err.details === undefined ? {} : { details: err.details }) } }, err.status);
   }
   if (err instanceof HTTPException) {
     return c.json({ error: { code: "HTTP_ERROR", message: err.message || "リクエストが正しくありません" } }, err.status);

@@ -7,7 +7,7 @@ export const SETTING_KEYS = {
   operations: "operations",
 } as const;
 
-export const DEFAULT_OPERATIONS: OperationSettings = { closingMode: "DAY", qrTtlSeconds: 300 };
+export const DEFAULT_OPERATIONS: OperationSettings = { closingMode: "DAY", qrTtlSeconds: 300, paymentSessionSeconds: 300 };
 
 export async function getSetting<T>(db: D1Database, key: string, fallback: T): Promise<T> {
   const row = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first<{ value: string }>();

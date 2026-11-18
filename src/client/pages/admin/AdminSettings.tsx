@@ -17,7 +17,7 @@ export function AdminSettings() {
   const [saved, setSaved] = useState<string | null>(null);
   const currency = useAction();
   const festival = useAction();
-  const [ops, setOps] = useState<OperationSettings>({ closingMode: "DAY", qrTtlSeconds: 300 });
+  const [ops, setOps] = useState<OperationSettings>({ closingMode: "DAY", qrTtlSeconds: 300, paymentSessionSeconds: 300 });
   const opsAction = useAction();
 
   useEffect(() => {
@@ -107,7 +107,7 @@ export function AdminSettings() {
       <Card className="h-fit">
         <CardHeader>
           <CardTitle>運用設定</CardTitle>
-          <CardDescription>現金の締め方と、お客様の提示用QRの有効時間です。</CardDescription>
+          <CardDescription>現金の締め方と、QR・決済の有効時間です。</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={saveOps} className="flex flex-col gap-3">
@@ -124,6 +124,9 @@ export function AdminSettings() {
             </Field>
             <Field label="提示用QRの有効時間(秒)" hint="60〜1800秒。既定は300秒(5分)">
               <Input type="number" min={60} max={1800} value={ops.qrTtlSeconds} onChange={(e) => setOps({ ...ops, qrTtlSeconds: Number(e.target.value) })} required />
+            </Field>
+            <Field label="決済セッションの有効時間(秒)" hint="お客様のQRを読み取ってから支払いを確定するまでの猶予。60〜1800秒。既定は300秒(5分)">
+              <Input type="number" min={60} max={1800} value={ops.paymentSessionSeconds} onChange={(e) => setOps({ ...ops, paymentSessionSeconds: Number(e.target.value) })} required />
             </Field>
             <ErrorText message={opsAction.error} />
             <Button type="submit" disabled={opsAction.pending}>

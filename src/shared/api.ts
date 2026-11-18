@@ -1,7 +1,7 @@
 import type { Role, ShopStatus, UserStatus } from "./roles";
 
 export interface ApiErrorBody {
-  error: { code: string; message: string };
+  error: { code: string; message: string; details?: unknown };
 }
 
 export interface SessionUser {
@@ -139,6 +139,8 @@ export interface ClosingDto {
 export interface OperationSettings {
   closingMode: ClosingMode;
   qrTtlSeconds: number;
+  /** 決済セッション(QR読み取りから確定までの猶予)の秒数。既定300秒(5分) */
+  paymentSessionSeconds: number;
 }
 
 // ---------- 商品・値下げ(店舗) ----------
@@ -199,3 +201,66 @@ export type CatalogResponse =
       cut: PriceCutDto | null;
       products: ProductDto[];
     };
+
+// ---------- 決済(店舗のレジ) ----------
+export interface CartItemInput {
+  productId: string;
+  quantity: number;
+}
+
+export interface QuoteLine {
+  productId: string;
+  name: string;
+  quantity: number;
+  /** 値下げ前の定価(1点) */
+  listUnitPrice: number;
+  /** 値下げ後の単価(1点) */
+  unitPrice: number;
+  lineTotal: number;
+}
+
+export type QuoteProblemCode = "NOT_FOUND" | "UNAVAILABLE" | "SOLD_OUT" | "INSUFFICIENT_STOCK" | "NO_PRICE";
+
+export interface QuoteProblem {
+  productId: string;
+  name: string | null;
+  code: QuoteProblemCode;
+  message: string;
+  /** 在庫不足のとき、いま用意できる数 */
+  available?: number;
+}
+
+export interface Quote {
+  lines: QuoteLine[];
+  total: number;
+  cut: { id: string; name: string } | null;
+  problems: QuoteProblem[];
+  signature: string;
+}
+
+export interface PaySession {
+  sessionId: string;
+  expiresAt: number;
+  customer: { nickname: string | null; balance: number };
+  quote: Quote;
+  /** 残高が足りないとき、不足額。足りているなら 0 */
+  shortfall: number;
+}
+
+export interface PayResult {
+  orderId: string;
+  orderNo: string;
+  total: number;
+  balanceAfter: number;
+  paidAt: number;
+  lines: QuoteLine[];
+  replayed?: boolean;
+}
+
+export type PaySessionStatus = "OPEN" | "COMMITTED" | "CANCELLED" | "EXPIRED";
+
+export interface PayStatus {
+  status: PaySessionStatus;
+  expiresAt: number;
+  result: PayResult | null;
+}

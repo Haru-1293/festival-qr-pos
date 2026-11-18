@@ -1,4 +1,4 @@
-import { Ban, Check, CloudOff, Tag } from "lucide-react";
+import { Ban, Check, CloudOff, ShoppingCart, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ProductDto } from "@shared/api";
 import { PriceView } from "@/components/PriceView";
@@ -9,8 +9,10 @@ import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
+import { useCart } from "@/lib/useCart";
 import { useCatalog } from "@/lib/useCatalog";
 import { cn } from "@/lib/utils";
+import { Checkout } from "./Checkout";
 
 function hm(ms: number) {
   return new Date(ms).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
@@ -24,6 +26,8 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
   const [notice, setNotice] = useState<string | null>(null);
   const first = useRef(true);
   const toggle = useAction();
+  const { cart, add, remove, clear } = useCart(shopId);
+  const [checkout, setCheckout] = useState(false);
 
   // 価格・売り切れが変わったら、画面上部に知らせる(最初の読み込みでは出さない)
   const prev = useRef<Map<string, string>>(new Map());
@@ -57,7 +61,24 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
     });
   };
 
-  const body = (
+  const count = Object.values(cart).reduce((a, b) => a + b, 0);
+  const total = Object.entries(cart).reduce((sum, [id, q]) => sum + (catalog?.products.find((p) => p.id === id)?.salePrice ?? 0) * q, 0);
+
+  const body = checkout ? (
+    <Checkout
+      shopId={shopId}
+      products={catalog?.products ?? []}
+      cart={cart}
+      onChange={add}
+      onRemove={remove}
+      onClose={() => setCheckout(false)}
+      onFinished={() => {
+        clear();
+        setCheckout(false);
+        void refresh();
+      }}
+    />
+  ) : (
       <div className="flex flex-col gap-3">
         {offline && (
           <div role="status" className="flex items-center gap-2 rounded-xl bg-amber-100 px-3 py-2 text-sm font-medium text-amber-900">
@@ -99,8 +120,19 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
         <div className="grid grid-cols-2 gap-3">
           {items.map((p) => (
             <Card key={p.id} className={cn("flex flex-col gap-2 p-3", p.soldOut && "opacity-60")}>
-              <p className="line-clamp-2 min-h-[2.5rem] text-sm font-bold leading-tight">{p.name}</p>
-              <PriceView p={p} className="text-lg" />
+              <button
+                type="button"
+                className="flex flex-col gap-2 text-left disabled:cursor-not-allowed"
+                disabled={p.soldOut || p.salePrice === null}
+                onClick={() => add(p.id, 1)}
+                aria-label={`${p.name}をカートに入れる`}
+              >
+                <p className="line-clamp-2 min-h-[2.5rem] text-sm font-bold leading-tight">{p.name}</p>
+                <span className="flex items-center justify-between gap-2">
+                  <PriceView p={p} className="text-lg" />
+                  {cart[p.id] ? <Badge>{cart[p.id]}</Badge> : null}
+                </span>
+              </button>
               <div className="flex flex-wrap items-center gap-1.5">
                 {p.soldOut && <Badge variant="destructive">{p.soldOutReason === "STOCK" ? "売り切れ(在庫なし)" : "売り切れ"}</Badge>}
                 {!p.soldOut && p.trackStock && p.stockQty !== null && p.stockQty <= 5 && <Badge variant="warning">残り{p.stockQty}</Badge>}
@@ -117,7 +149,16 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
             </Card>
           ))}
         </div>
-        <p className="text-center text-xs text-muted-foreground">会計(カート・QR決済)は次の更新で追加されます</p>
+        {count > 0 && (
+          <div className="sticky bottom-0 -mx-4 border-t border-border bg-background px-4 py-3">
+            <Button size="lg" className="w-full justify-between" onClick={() => setCheckout(true)}>
+              <span className="flex items-center gap-2">
+                <ShoppingCart /> カート {count}点
+              </span>
+              <span>{money(total)}</span>
+            </Button>
+          </div>
+        )}
       </div>
   );
   return embedded ? body : <Shell title={shopName || "レジ"}>{body}</Shell>;

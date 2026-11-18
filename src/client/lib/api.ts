@@ -3,10 +3,12 @@ import type { ApiErrorBody } from "@shared/api";
 export class ApiRequestError extends Error {
   readonly status: number;
   readonly code: string;
-  constructor(status: number, code: string, message: string) {
+  readonly details?: unknown;
+  constructor(status: number, code: string, message: string, details?: unknown) {
     super(message);
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -41,7 +43,7 @@ export async function api<T>(path: string, opts: Options = {}): Promise<T> {
   }
   if (!res.ok) {
     const e = (json as ApiErrorBody | null)?.error;
-    throw new ApiRequestError(res.status, e?.code ?? "HTTP_ERROR", e?.message ?? `エラーが発生しました (${res.status})`);
+    throw new ApiRequestError(res.status, e?.code ?? "HTTP_ERROR", e?.message ?? `エラーが発生しました (${res.status})`, e?.details);
   }
   return json as T;
 }

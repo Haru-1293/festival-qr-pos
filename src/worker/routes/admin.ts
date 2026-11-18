@@ -296,12 +296,14 @@ export const adminRoutes = new Hono<AppEnv>()
       z.object({
         closingMode: z.enum(["DAY", "SHIFT", "MANUAL"]),
         qrTtlSeconds: z.number().int().min(60, "60秒以上にしてください").max(1800, "30分(1800秒)以内にしてください"),
+        paymentSessionSeconds: z.number().int().min(60, "60秒以上にしてください").max(1800, "30分(1800秒)以内にしてください").optional(),
       }),
     ),
     async (c) => {
       const auth = requireAuth(c);
-      const next = c.req.valid("json");
       const before = await getOperations(c.env.DB);
+      // 送られなかった項目は、いまの値を保つ(古い画面・呼び出しが他の設定を壊さない)
+      const next = { ...before, ...Object.fromEntries(Object.entries(c.req.valid("json")).filter(([, v]) => v !== undefined)) };
       await c.env.DB.batch([
         setSettingStmt(c.env.DB, SETTING_KEYS.operations, next, auth.userId),
         auditStmt(c.env.DB, { actor: auth, action: "settings.operations", targetType: "settings", targetId: SETTING_KEYS.operations, before, after: next }),
