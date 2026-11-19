@@ -218,8 +218,14 @@ export function RefundManager({ shopId }: { shopId: string }) {
                       <div className="flex items-center justify-between gap-2">
                         <div className="min-w-0">
                           <p className="truncate font-semibold">{l.name}</p>
+                          {l.components && l.components.length > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              {l.components.map((c) => `${c.name}${c.quantity > 1 ? `×${c.quantity}` : ""}${c.surcharge > 0 ? `(+${c.surcharge})` : ""}`).join("、")}
+                            </p>
+                          )}
                           <p className="text-xs text-muted-foreground">
                             {money(l.unitPrice)} × {l.quantity}
+                            {l.kind === "SET" && " (追加料金は別)"}
                             {l.priceCutName && `(${l.priceCutName})`} ・ 返金済み {l.refundedQuantity}個
                           </p>
                         </div>

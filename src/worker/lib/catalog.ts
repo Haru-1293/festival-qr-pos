@@ -1,4 +1,5 @@
 import type { CatalogResponse, PriceCutDto, PriceCutState, ProductDto, SaleMode, ProductStatus } from "@shared/api";
+import { loadSets } from "./sets";
 import { cutAmount, type PriceCutMethod, type PriceCutRule } from "@shared/pricing";
 
 interface CutRow {
@@ -135,6 +136,6 @@ export async function buildPosCatalog(db: D1Database, shopId: string, since: str
   const signature = catalogSignature(version, cut);
   if (since === signature) return { changed: false, signature, serverTime: now };
   const shop = await db.prepare("SELECT display_name FROM shops WHERE id = ?").bind(shopId).first<{ display_name: string }>();
-  const products = await loadProducts(db, shopId, { cut, posOnly: true });
-  return { changed: true, signature, serverTime: now, shopName: shop?.display_name ?? "", cut, products };
+  const [products, sets] = await Promise.all([loadProducts(db, shopId, { cut, posOnly: true }), loadSets(db, shopId, { cut, posOnly: true })]);
+  return { changed: true, signature, serverTime: now, shopName: shop?.display_name ?? "", cut, products, sets };
 }

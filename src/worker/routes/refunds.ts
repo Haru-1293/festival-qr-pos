@@ -31,6 +31,7 @@ interface OrderRow {
 }
 interface LineRow {
   id: string;
+  kind: "PRODUCT" | "SET";
   product_id: string | null;
   name_snapshot: string;
   unit_price: number;
@@ -98,10 +99,10 @@ export const refundRoutes = new Hono<AppEnv>()
     const db = c.env.DB;
     const o = await loadOrder(db, orderId);
     assertOrderAccess(auth, o);
-    const [{ results: lines }, { results: refunds }, { results: rlines }, meta] = await Promise.all([
+    const [{ results: lines }, { results: refunds }, { results: rlines }, meta, { results: comps }] = await Promise.all([
       db
         .prepare(
-          `SELECT id, product_id, name_snapshot, unit_price, list_unit_price, price_cut_name, quantity, line_paid, refunded_amount, refunded_quantity
+          `SELECT id, kind, product_id, name_snapshot, unit_price, list_unit_price, price_cut_name, quantity, line_paid, refunded_amount, refunded_quantity
              FROM order_lines WHERE order_id = ? ORDER BY line_no`,
         )
         .bind(orderId)
@@ -128,6 +129,13 @@ export const refundRoutes = new Hono<AppEnv>()
         )
         .bind(orderId)
         .first<{ shop: string; customer: string | null; clerk: string | null }>(),
+      db
+        .prepare(
+          `SELECT c.order_line_id, c.segment_name_snapshot AS segment, c.name_snapshot AS name, c.quantity, c.surcharge
+             FROM order_line_components c JOIN order_lines l ON l.id = c.order_line_id WHERE l.order_id = ? ORDER BY c.rowid`,
+        )
+        .bind(orderId)
+        .all<{ order_line_id: string; segment: string; name: string; quantity: number; surcharge: number }>(),
     ]);
     const detail: OrderDetail = {
       id: o.id,
@@ -144,7 +152,14 @@ export const refundRoutes = new Hono<AppEnv>()
       lines: lines.map(
         (l): OrderLineDto => ({
           id: l.id,
+          kind: l.kind,
           productId: l.product_id,
+          components:
+            l.kind === "SET"
+              ? comps
+                  .filter((x) => x.order_line_id === l.id)
+                  .map((x) => ({ segmentName: x.segment, name: x.name, quantity: x.quantity / l.quantity, surcharge: x.surcharge }))
+              : undefined,
           name: l.name_snapshot,
           quantity: l.quantity,
           unitPrice: l.unit_price,
@@ -220,12 +235,18 @@ export const refundRoutes = new Hono<AppEnv>()
 
       const { results: lines } = await db
         .prepare(
-          `SELECT id, product_id, name_snapshot, unit_price, list_unit_price, price_cut_name, quantity, line_paid, refunded_amount, refunded_quantity
+          `SELECT id, kind, product_id, name_snapshot, unit_price, list_unit_price, price_cut_name, quantity, line_paid, refunded_amount, refunded_quantity
              FROM order_lines WHERE order_id = ?`,
         )
         .bind(orderId)
         .all<LineRow>();
       const lineById = new Map(lines.map((l) => [l.id, l]));
+      const { results: comps } = await db
+        .prepare(
+          `SELECT c.order_line_id, c.product_id, c.quantity FROM order_line_components c JOIN order_lines l ON l.id = c.order_line_id WHERE l.order_id = ?`,
+        )
+        .bind(orderId)
+        .all<{ order_line_id: string; product_id: string; quantity: number }>();
 
       // 返金する行と金額を決める
       interface Pick {
@@ -307,7 +328,29 @@ export const refundRoutes = new Hono<AppEnv>()
             )
             .bind(p.amount, p.qty, p.line.id, refundId),
         );
-        if (p.restore && p.line.product_id) {
+        if (p.restore && p.line.kind === "SET") {
+          // セット内の商品は、返金する数に応じて1セットあたりの個数ぶん戻す
+          const per = new Map<string, number>();
+          for (const cmp of comps) {
+            if (cmp.order_line_id !== p.line.id) continue;
+            per.set(cmp.product_id, (per.get(cmp.product_id) ?? 0) + cmp.quantity / p.line.quantity);
+          }
+          for (const [pid, perSet] of per) {
+            const qty = perSet * p.qty;
+            restored = true;
+            stmts.push(
+              db
+                .prepare(`UPDATE products SET stock_qty = stock_qty + ?, updated_at = ? WHERE id = ? AND track_stock = 1 AND ${refundExists}`)
+                .bind(qty, now, pid, refundId),
+              db
+                .prepare(
+                  `INSERT INTO stock_movements (id, product_id, delta, qty_after, reason, ref_type, ref_id, operator_user_id, created_at)
+                   SELECT ?, p.id, ?, p.stock_qty, 'REFUND_RESTORE', 'REFUND', ?, ?, ? FROM products p WHERE p.id = ? AND p.track_stock = 1 AND ${refundExists}`,
+                )
+                .bind(newId(now), qty, refundId, auth.userId, now, pid, refundId),
+            );
+          }
+        } else if (p.restore && p.line.product_id) {
           restored = true;
           stmts.push(
             db
@@ -345,6 +388,9 @@ export const refundRoutes = new Hono<AppEnv>()
         throw e;
       }
       if ((results[0].meta.changes ?? 0) === 0) {
+        // 同じリクエストIDの同時送信で、先の1件がすでに確定していた場合は、競合ではなく「同じ結果の再送」として返す
+        const again = await db.prepare("SELECT id FROM refunds WHERE idempotency_key = ?").bind(b.requestId).first<{ id: string }>();
+        if (again) return c.json(await refundResult(db, again.id, true));
         throw conflict("この注文は、確認している間に別の返金が行われました。画面を更新して確認してください", "REFUND_CHANGED");
       }
       return c.json(await refundResult(db, refundId, false), 201);

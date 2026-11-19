@@ -1,7 +1,6 @@
 import { ArrowLeft, CircleCheck, Minus, Plus, ScanLine, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PayResult, PaySession, PayStatus, ProductDto, Quote } from "@shared/api";
-import { PriceView } from "@/components/PriceView";
+import type { PayResult, PaySession, PayStatus, ProductDto, Quote, QuoteLine, SetDto } from "@shared/api";
 import { QrScanner, scannerSupported } from "@/components/QrScanner";
 import { ErrorText } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +9,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ApiRequestError, api, errorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { Cart } from "@/lib/useCart";
+import { viewCartLine } from "@/lib/cartView";
+import { type Cart, toCartItems } from "@/lib/useCart";
 import { useRequestId } from "@/lib/useRequestId";
 import { cn, formatDateTime } from "@/lib/utils";
 
@@ -19,8 +19,9 @@ type Step = "cart" | "scan" | "confirm" | "unknown" | "done";
 interface Props {
   shopId: string;
   products: ProductDto[];
+  sets: SetDto[];
   cart: Cart;
-  onChange: (id: string, by: number) => void;
+  onChange: (key: string, by: number) => void;
   onRemove: (id: string) => void;
   onFinished: () => void;
   onClose: () => void;
@@ -29,7 +30,7 @@ interface Props {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** カート確認 → お客様のQR読み取り → 支払い確定。価格はサーバーが確定の瞬間に再計算する */
-export function Checkout({ shopId, products, cart, onChange, onRemove, onFinished, onClose }: Props) {
+export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onFinished, onClose }: Props) {
   const { money } = useAuth();
   const [step, setStep] = useState<Step>("cart");
   const [session, setSession] = useState<PaySession | null>(null);
@@ -44,11 +45,10 @@ export function Checkout({ shopId, products, cart, onChange, onRemove, onFinishe
   const reqId = useRequestId();
   const renewReq = reqId.renew;
 
-  const byId = new Map(products.map((p) => [p.id, p]));
-  const rows = Object.entries(cart).map(([id, qty]) => ({ id, qty, p: byId.get(id) ?? null }));
-  const unavailable = rows.some((r) => !r.p || r.p.soldOut || (r.p.trackStock && r.p.stockQty !== null && r.p.stockQty < r.qty));
-  const localTotal = rows.reduce((s, r) => s + (r.p?.salePrice ?? 0) * r.qty, 0);
-  const items = rows.map((r) => ({ productId: r.id, quantity: r.qty }));
+  const rows = cart.map((l) => ({ line: l, v: viewCartLine(l, products, sets) }));
+  const unavailable = rows.some((r) => r.v.problem !== null);
+  const localTotal = rows.reduce((s, r) => s + r.v.unit * r.line.quantity, 0);
+  const items = toCartItems(cart);
 
   // 読み取りの関数(カメラの再起動を避けるため固定)から、いつでも最新のカートを読めるようにする
   const latest = useRef({ items, localTotal });
@@ -185,13 +185,8 @@ export function Checkout({ shopId, products, cart, onChange, onRemove, onFinishe
             <p className="text-sm text-secondary-foreground">残高 {money(result.balanceAfter)}</p>
           </div>
           <CardContent className="flex flex-col gap-1 pt-3 text-sm">
-            {result.lines.map((l) => (
-              <div key={l.productId} className="flex justify-between gap-2">
-                <span className="min-w-0 truncate">
-                  {l.name} × {l.quantity}
-                </span>
-                <span className="shrink-0">{money(l.lineTotal)}</span>
-              </div>
+            {result.lines.map((l, i) => (
+              <QuoteLineRow key={`${l.productId}-${i}`} l={l} />
             ))}
             <p className="mt-2 text-xs text-muted-foreground">
               取引番号 {result.orderNo} ・ {formatDateTime(result.paidAt)}
@@ -233,16 +228,8 @@ export function Checkout({ shopId, products, cart, onChange, onRemove, onFinishe
             {quote.cut && <Badge variant="destructive" className="mt-1">{quote.cut.name} 適用中</Badge>}
           </div>
           <CardContent className="flex flex-col gap-1 pt-3 text-sm">
-            {quote.lines.map((l) => (
-              <div key={l.productId} className="flex items-baseline justify-between gap-2">
-                <span className="min-w-0 truncate">
-                  {l.name} × {l.quantity}
-                </span>
-                <span className="shrink-0">
-                  {l.unitPrice < l.listUnitPrice && <span className="mr-1.5 text-xs text-muted-foreground line-through">{money(l.listUnitPrice * l.quantity)}</span>}
-                  {money(l.lineTotal)}
-                </span>
-              </div>
+            {quote.lines.map((l, i) => (
+              <QuoteLineRow key={`${l.productId}-${i}`} l={l} />
             ))}
             <p className={cn("mt-2 text-sm font-semibold", short && "text-destructive")}>
               {short ? `残高が ${money(-after)} 足りません` : `支払い後の残高 ${money(after)}`}
@@ -312,36 +299,39 @@ export function Checkout({ shopId, products, cart, onChange, onRemove, onFinishe
       </Button>
       {rows.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">カートは空です</p>}
       <div className="flex flex-col gap-2">
-        {rows.map(({ id, qty, p }) => {
-          const bad = !p || p.soldOut || (p.trackStock && p.stockQty !== null && p.stockQty < qty);
-          return (
-            <Card key={id} className={cn("p-3", bad && "border-destructive")}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate font-semibold">{p?.name ?? "(販売終了)"}</p>
-                  {p && <PriceView p={p} />}
-                  {bad && (
-                    <p className="text-xs font-semibold text-destructive">
-                      {!p ? "この商品は販売されていません" : p.soldOut ? "売り切れです" : `残り${p.stockQty}個です`}
-                    </p>
-                  )}
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <Button size="icon" variant="outline" aria-label="減らす" onClick={() => onChange(id, -1)}>
-                    <Minus />
-                  </Button>
-                  <span className="w-8 text-center text-lg font-bold">{qty}</span>
-                  <Button size="icon" variant="outline" aria-label="増やす" onClick={() => onChange(id, 1)}>
-                    <Plus />
-                  </Button>
-                  <Button size="icon" variant="ghost" aria-label="削除" onClick={() => onRemove(id)}>
-                    <Trash2 />
-                  </Button>
-                </div>
+        {rows.map(({ line, v }) => (
+          <Card key={line.key} className={cn("p-3", v.problem && "border-destructive")}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate font-semibold">{v.name}</p>
+                {v.details.length > 0 && (
+                  <ul className="text-xs text-muted-foreground">
+                    {v.details.map((d, i) => (
+                      <li key={i}>{d}</li>
+                    ))}
+                  </ul>
+                )}
+                <p className="text-sm">
+                  {v.listUnit > v.unit && <span className="mr-1.5 text-xs text-muted-foreground line-through">{money(v.listUnit)}</span>}
+                  <span className="font-bold">{money(v.unit)}</span>
+                </p>
+                {v.problem && <p className="text-xs font-semibold text-destructive">{v.problem}</p>}
               </div>
-            </Card>
-          );
-        })}
+              <div className="flex shrink-0 items-center gap-1.5">
+                <Button size="icon" variant="outline" aria-label="減らす" onClick={() => onChange(line.key, -1)}>
+                  <Minus />
+                </Button>
+                <span className="w-8 text-center text-lg font-bold">{line.quantity}</span>
+                <Button size="icon" variant="outline" aria-label="増やす" onClick={() => onChange(line.key, 1)}>
+                  <Plus />
+                </Button>
+                <Button size="icon" variant="ghost" aria-label="削除" onClick={() => onRemove(line.key)}>
+                  <Trash2 />
+                </Button>
+              </div>
+            </div>
+          </Card>
+        ))}
       </div>
       {notice && <p role="status" className="rounded-xl bg-secondary px-3 py-2 text-sm font-semibold text-secondary-foreground">{notice}</p>}
       <ErrorText message={error} />
@@ -362,6 +352,29 @@ export function Checkout({ shopId, products, cart, onChange, onRemove, onFinishe
           <ScanLine /> お客様のQRを読み取る
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** 確認・完了画面の1行。セットは内訳と追加料金も見せる */
+function QuoteLineRow({ l }: { l: QuoteLine }) {
+  const { money } = useAuth();
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="min-w-0 truncate">
+          {l.name} × {l.quantity}
+        </span>
+        <span className="shrink-0">
+          {l.unitPrice < l.listUnitPrice && <span className="mr-1.5 text-xs text-muted-foreground line-through">{money(l.listUnitPrice * l.quantity)}</span>}
+          {money(l.lineTotal)}
+        </span>
+      </div>
+      {l.components && l.components.length > 0 && (
+        <p className="text-xs text-muted-foreground">
+          {l.components.map((c) => `${c.name}${c.surcharge > 0 ? `(+${c.surcharge})` : ""}`).join("、")}
+        </p>
+      )}
     </div>
   );
 }

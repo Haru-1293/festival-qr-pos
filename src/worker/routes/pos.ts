@@ -21,12 +21,24 @@ const requestIdSchema = z
   .max(64)
   .regex(/^[A-Za-z0-9_-]+$/, "リクエストIDの形式が正しくありません");
 const cartSchema = z
-  .array(z.object({ productId: z.string().length(26), quantity: z.number().int().min(1, "数量は1以上にしてください").max(99, "1商品あたり99個までです") }))
+  .array(
+    z
+      .object({
+        productId: z.string().length(26).optional(),
+        setId: z.string().length(26).optional(),
+        picks: z.record(z.string().length(26), z.array(z.string().length(26)).max(10)).optional(),
+        quantity: z.number().int().min(1, "数量は1以上にしてください").max(99, "1商品あたり99個までです"),
+      })
+      .refine((i) => (i.productId ? !i.setId && !i.picks : !!i.setId), "商品かセットのどちらか一方を指定してください"),
+  )
   .min(1, "カートが空です")
   .max(30, "一度に会計できるのは30種類までです");
 
+/** セットの売り切れ手動切り替えなどに使うパラメータ */
+const setParam = zValidator("param", z.object({ shopId: z.string().length(26), setId: z.string().length(26) }));
+
 /** 見積もりを画面へ返す形にする(確定時の照合用の内部値は含めない) */
-const publicQuote = ({ raw: _raw, ...q }: CartQuote): Quote => q;
+const publicQuote = ({ raw: _raw, needs: _needs, ...q }: CartQuote): Quote => q;
 
 const productParam = zValidator("param", z.object({ shopId: z.string().length(26), productId: z.string().length(26) }));
 
@@ -82,6 +94,38 @@ export const posRoutes = new Hono<AppEnv>()
     },
   )
 
+  // セットの手動売り切れ/販売再開(店員も行える)
+  .post("/:shopId/sets/:setId/sold-out", setParam, zValidator("json", z.object({ soldOut: z.boolean() })), async (c) => {
+    const auth = requireAuth(c);
+    const { shopId, setId } = c.req.valid("param");
+    assertShopAccess(auth, shopId);
+    const { soldOut } = c.req.valid("json");
+    const db = c.env.DB;
+    const cur = await db
+      .prepare("SELECT manual_sold_out FROM sets WHERE id = ? AND shop_id = ? AND status <> 'ARCHIVED'")
+      .bind(setId, shopId)
+      .first<{ manual_sold_out: number }>();
+    if (!cur) throw notFound("セットが見つかりません");
+    await db.batch([
+      db.prepare("UPDATE sets SET manual_sold_out = ?, updated_at = ? WHERE id = ? AND shop_id = ?").bind(soldOut ? 1 : 0, Date.now(), setId, shopId),
+      bumpCatalogStmt(db, shopId),
+      auditStmtIfExists(
+        db,
+        {
+          actor: auth,
+          action: soldOut ? "set.sold_out" : "set.resume_sale",
+          targetType: "set",
+          targetId: setId,
+          before: { manualSoldOut: cur.manual_sold_out === 1 },
+          after: { manualSoldOut: soldOut },
+        },
+        "SELECT 1 FROM sets WHERE id = ? AND manual_sold_out = ?",
+        [setId, soldOut ? 1 : 0],
+      ),
+    ]);
+    return c.json({ ok: true });
+  })
+
   // ---------- 決済 ----------
   // お客様のQRを読み取る。QRはここで消費され、決済セッション(猶予は設定値、既定5分)ができる。
   // カートに買えない商品があるときは、QRを消費する前にエラーにする(お客様のQRを無駄にしない)
@@ -109,7 +153,7 @@ export const posRoutes = new Hono<AppEnv>()
       const sessionId = newId(now);
       const { paymentSessionSeconds } = await getOperations(db);
       const expiresAt = now + paymentSessionSeconds * 1000;
-      const cart = JSON.stringify(quote.lines.map((l) => ({ productId: l.productId, quantity: l.quantity })));
+      const cart = JSON.stringify(items);
 
       // 持ち主のアカウントが停止中なら、QRを消費せずに断る
       const owner = await db
@@ -240,15 +284,49 @@ export const posRoutes = new Hono<AppEnv>()
       const orderId = newId(now);
       const ledgerId = newId(now);
       const orderExists = "EXISTS (SELECT 1 FROM orders WHERE id = ?)";
-      // 見積もり時点から商品・値下げ・顧客・店舗が変わっていたら、最初の更新が 0 行になり何も起きない
-      const guards = quote.raw.map(
-        () =>
-          `EXISTS (SELECT 1 FROM products p WHERE p.id = ? AND p.shop_id = ? AND p.status = 'ACTIVE' AND p.sale_mode <> 'SET_ONLY'
-             AND p.manual_sold_out = 0 AND p.price = ? AND p.discountable = ? AND (p.track_stock = 0 OR p.stock_qty >= ?))`,
-      );
-      const guardArgs = quote.raw.flatMap((l) => [l.productId, shopId, l.listUnitPrice, l.discountable ? 1 : 0, l.quantity]);
       const cutGuard = `COALESCE((SELECT id FROM shop_price_cuts WHERE shop_id = ? AND status = 'ACTIVE'
           AND (starts_at IS NULL OR starts_at <= ?) AND (ends_at IS NULL OR ends_at > ?)), '-') = ?`;
+
+      // 見積もり時点から商品・セット・値下げ・顧客・店舗が変わっていないことの確認(SQL のガード)。
+      // D1 は1文あたりの束縛値が100個までなので、ガードは小分けにして並べる。
+      // 先頭の文が決済セッションを COMMITTED にし、続く文は条件を満たさないとき OPEN へ戻す。注文の作成は COMMITTED が前提
+      const guards: { sql: string; args: (string | number)[] }[] = [];
+      const needBy = new Map(quote.needs.map((n) => [n.productId, n]));
+      for (const l of quote.raw) {
+        if (l.kind === "PRODUCT") {
+          guards.push({
+            sql: `EXISTS (SELECT 1 FROM products p WHERE p.id = ? AND p.shop_id = ? AND p.price = ? AND p.discountable = ?)`,
+            args: [l.productId, shopId, l.listUnitPrice, l.discountable ? 1 : 0],
+          });
+        } else {
+          guards.push({
+            sql: `EXISTS (SELECT 1 FROM sets s WHERE s.id = ? AND s.shop_id = ? AND s.status = 'ACTIVE' AND s.manual_sold_out = 0 AND s.price = ? AND s.discountable = ?)`,
+            args: [l.productId, shopId, l.listUnitPrice, l.discountable ? 1 : 0],
+          });
+          for (const r of l.pickRows ?? []) {
+            guards.push({
+              sql: `EXISTS (SELECT 1 FROM set_segment_items i JOIN set_segments g ON g.id = i.segment_id
+                     WHERE g.set_id = ? AND i.segment_id = ? AND i.product_id = ? AND i.surcharge = ?)`,
+              args: [l.productId, r.segmentId, r.productId, r.surcharge],
+            });
+          }
+        }
+      }
+      for (const n of quote.needs) {
+        const modeOk = [n.single > 0 ? "p.sale_mode <> 'SET_ONLY'" : "", n.inSet > 0 ? "p.sale_mode <> 'SINGLE_ONLY'" : ""].filter(Boolean).join(" AND ");
+        guards.push({
+          sql: `EXISTS (SELECT 1 FROM products p WHERE p.id = ? AND p.shop_id = ? AND p.status = 'ACTIVE' AND ${modeOk}
+                 AND p.manual_sold_out = 0 AND (p.track_stock = 0 OR p.stock_qty >= ?))`,
+          args: [n.productId, shopId, n.single + n.inSet],
+        });
+      }
+      const chunks: { sql: string[]; args: (string | number)[] }[] = [];
+      for (const g of guards) {
+        let cur = chunks[chunks.length - 1];
+        if (!cur || cur.args.length + g.args.length > 80) chunks.push((cur = { sql: [], args: [] }));
+        cur.sql.push(g.sql);
+        cur.args.push(...g.args);
+      }
 
       const stmts: D1PreparedStatement[] = [
         db
@@ -258,10 +336,19 @@ export const posRoutes = new Hono<AppEnv>()
                 AND EXISTS (SELECT 1 FROM shops WHERE id = ? AND status = 'ACTIVE')
                 AND EXISTS (SELECT 1 FROM wallets w WHERE w.id = payment_sessions.wallet_id AND w.status = 'ACTIVE'
                       AND (w.owner_user_id IS NULL OR EXISTS (SELECT 1 FROM users u WHERE u.id = w.owner_user_id AND u.status = 'ACTIVE')))
-                AND ${cutGuard}
-                ${guards.map((g) => `AND ${g}`).join("\n")}`,
+                AND ${cutGuard}`,
           )
-          .bind(sessionId, shopId, now, shopId, shopId, now, now, quote.cut?.id ?? "-", ...guardArgs),
+          .bind(sessionId, shopId, now, shopId, shopId, now, now, quote.cut?.id ?? "-"),
+        ...chunks.map((ch) =>
+          db
+            .prepare(
+              `UPDATE payment_sessions SET status = 'OPEN' WHERE id = ? AND status = 'COMMITTED' AND order_id IS NULL AND NOT (${ch.sql.join(" AND ")})`,
+            )
+            .bind(sessionId, ...ch.args),
+        ),
+      ];
+      const orderIdx = stmts.length;
+      stmts.push(
         db
           .prepare(
             `INSERT INTO orders (id, order_no, shop_id, clerk_user_id, wallet_id, pay_source, subtotal, discount_total, total_paid, status, idempotency_key, paid_at)
@@ -283,30 +370,55 @@ export const posRoutes = new Hono<AppEnv>()
         db
           .prepare(`UPDATE payment_sessions SET order_id = ? WHERE id = ? AND ${orderExists}`)
           .bind(orderId, sessionId, orderId),
-      ];
+      );
       quote.raw.forEach((l, i) => {
+        const lineId = newId(now);
+        const discounted = l.unitPrice < l.listUnitPrice;
         stmts.push(
           db
             .prepare(
-              `INSERT INTO order_lines (id, order_id, line_no, kind, product_id, name_snapshot, unit_price, quantity, line_subtotal, line_paid,
+              `INSERT INTO order_lines (id, order_id, line_no, kind, product_id, set_id, name_snapshot, unit_price, quantity, surcharge_total, line_subtotal, line_paid,
                                         list_unit_price, price_cut_id, price_cut_name)
-               SELECT ?, ?, ?, 'PRODUCT', ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${orderExists}`,
+               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${orderExists}`,
             )
-            .bind(newId(now), orderId, i + 1, l.productId, l.name, l.unitPrice, l.quantity, l.lineTotal, l.lineTotal, l.listUnitPrice, l.unitPrice < l.listUnitPrice ? (quote.cut?.id ?? null) : null, l.unitPrice < l.listUnitPrice ? (quote.cut?.name ?? null) : null, orderId),
+            .bind(
+              lineId, orderId, i + 1, l.kind,
+              l.kind === "PRODUCT" ? l.productId : null,
+              l.kind === "SET" ? l.productId : null,
+              l.name, l.unitPrice, l.quantity, l.surchargeTotal, l.lineTotal, l.lineTotal, l.listUnitPrice,
+              discounted ? (quote.cut?.id ?? null) : null,
+              discounted ? (quote.cut?.name ?? null) : null,
+              orderId,
+            ),
         );
-        if (l.trackStock) {
-          // 在庫の減算。足りなければ CHECK 制約が全体を巻き戻す(売り越しを DB が拒否)
+        // セットの内訳(数量はセット数ぶんの合計。追加料金は1セットあたり)
+        for (const r of l.pickRows ?? []) {
           stmts.push(
-            db.prepare(`UPDATE products SET stock_qty = stock_qty - ?, updated_at = ? WHERE id = ? AND track_stock = 1 AND ${orderExists}`).bind(l.quantity, now, l.productId, orderId),
             db
               .prepare(
-                `INSERT INTO stock_movements (id, product_id, delta, qty_after, reason, ref_type, ref_id, operator_user_id, created_at)
-                 SELECT ?, p.id, ?, p.stock_qty, 'SALE', 'ORDER', ?, ?, ? FROM products p WHERE p.id = ? AND p.track_stock = 1 AND ${orderExists}`,
+                `INSERT INTO order_line_components (id, order_line_id, segment_name_snapshot, product_id, name_snapshot, quantity, surcharge)
+                 SELECT ?, ?, ?, ?, ?, ?, ? WHERE ${orderExists}`,
               )
-              .bind(newId(now), -l.quantity, orderId, auth.userId, now, l.productId, orderId),
+              .bind(newId(now), lineId, r.segmentName, r.productId, r.name, r.count * l.quantity, r.surcharge, orderId),
           );
         }
       });
+      // 在庫の減算(単品ぶんは SALE、セット内ぶんは SET_SALE として記録)。足りなければ CHECK 制約が全体を巻き戻す(売り越しを DB が拒否)
+      for (const n of quote.needs) {
+        if (!needBy.get(n.productId)?.trackStock) continue;
+        for (const [qty, reason] of [[n.single, "SALE"], [n.inSet, "SET_SALE"]] as const) {
+          if (qty <= 0) continue;
+          stmts.push(
+            db.prepare(`UPDATE products SET stock_qty = stock_qty - ?, updated_at = ? WHERE id = ? AND track_stock = 1 AND ${orderExists}`).bind(qty, now, n.productId, orderId),
+            db
+              .prepare(
+                `INSERT INTO stock_movements (id, product_id, delta, qty_after, reason, ref_type, ref_id, operator_user_id, created_at)
+                 SELECT ?, p.id, ?, p.stock_qty, ?, 'ORDER', ?, ?, ? FROM products p WHERE p.id = ? AND p.track_stock = 1 AND ${orderExists}`,
+              )
+              .bind(newId(now), -qty, reason, orderId, auth.userId, now, n.productId, orderId),
+          );
+        }
+      }
       stmts.push(
         bumpCatalogStmt(db, shopId),
         auditStmtIfExists(
@@ -332,7 +444,7 @@ export const posRoutes = new Hono<AppEnv>()
         throw e;
       }
 
-      if ((results[0].meta.changes ?? 0) === 0) {
+      if ((results[orderIdx].meta.changes ?? 0) === 0) {
         // 確定できなかった(誰かが先に確定・取り消した、期限切れ、見積もりのあとに価格や売り切れが変わった)
         const now2 = Date.now();
         const cur = await db.prepare("SELECT status, order_id FROM payment_sessions WHERE id = ?").bind(sessionId).first<{ status: string; order_id: string | null }>();

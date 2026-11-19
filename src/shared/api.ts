@@ -200,16 +200,94 @@ export type CatalogResponse =
       /** いま適用中の値下げ。なければ null */
       cut: PriceCutDto | null;
       products: ProductDto[];
+      /** 販売中のセット(選択肢つき) */
+      sets: SetDto[];
     };
 
-// ---------- 決済(店舗のレジ) ----------
-export interface CartItemInput {
+// ---------- セット商品 ----------
+export type SetUnavailableReason = "STOPPED" | "MANUAL" | "NO_OPTIONS";
+
+export interface SetItemDto {
   productId: string;
+  name: string;
+  /** この選択肢を選んだときの追加料金(1セットあたり) */
+  surcharge: number;
+  /** 選べない(売り切れ・販売停止など)。画面では無効な選択肢として表示する */
+  disabled: boolean;
+  disabledReason: "SOLD_OUT" | "STOCK" | "UNAVAILABLE" | null;
+  stockQty: number | null;
+}
+
+export interface SetSegmentDto {
+  id: string;
+  name: string;
+  required: boolean;
+  pickCount: number;
+  allowDuplicate: boolean;
+  sortOrder: number;
+  items: SetItemDto[];
+}
+
+export interface SetDto {
+  id: string;
+  name: string;
+  /** セット定価(追加料金を含まない) */
+  price: number;
+  /** 値下げ後のセット価格(追加料金を含まない) */
+  salePrice: number;
+  cutAmount: number;
+  description: string | null;
+  status: ProductStatus;
+  manualSoldOut: boolean;
+  discountable: boolean;
+  sortOrder: number;
+  segments: SetSegmentDto[];
+  /** いまこのセットを売れる(必須の内訳をすべて満たせる) */
+  available: boolean;
+  unavailableReason: SetUnavailableReason | null;
+}
+
+/** 店舗責任者がセットを登録・更新するときの内容 */
+export interface SetInput {
+  name: string;
+  price: number;
+  description?: string | null;
+  discountable: boolean;
+  sortOrder: number;
+  segments: {
+    name: string;
+    required: boolean;
+    pickCount: number;
+    allowDuplicate: boolean;
+    items: { productId: string; surcharge: number }[];
+  }[];
+}
+
+// ---------- 決済(店舗のレジ) ----------
+/** 単品は productId、セットは setId と picks(内訳セグメントID → 選んだ商品ID。複数選択は並べる) */
+export interface CartItemInput {
+  productId?: string;
+  setId?: string;
+  picks?: Record<string, string[]>;
   quantity: number;
 }
 
-export interface QuoteLine {
+export interface QuoteComponent {
+  segmentName: string;
   productId: string;
+  name: string;
+  /** 1セットあたりの追加料金 */
+  surcharge: number;
+}
+
+export interface QuoteLine {
+  kind: "PRODUCT" | "SET";
+  /** 単品なら商品ID、セットならセットID */
+  productId: string;
+  /** セットのとき: 内訳(選んだ商品) */
+  components?: QuoteComponent[];
+  /** セットのとき: 追加料金の合計(数量ぶん) */
+  surchargeTotal: number;
   name: string;
   quantity: number;
   /** 値下げ前の定価(1点) */
@@ -219,7 +297,7 @@ export interface QuoteLine {
   lineTotal: number;
 }
 
-export type QuoteProblemCode = "NOT_FOUND" | "UNAVAILABLE" | "SOLD_OUT" | "INSUFFICIENT_STOCK" | "NO_PRICE";
+export type QuoteProblemCode = "INVALID_PICKS" | "NOT_FOUND" | "UNAVAILABLE" | "SOLD_OUT" | "INSUFFICIENT_STOCK" | "NO_PRICE";
 
 export interface QuoteProblem {
   productId: string;
@@ -281,7 +359,10 @@ export interface OrderSummary {
 
 export interface OrderLineDto {
   id: string;
+  kind: "PRODUCT" | "SET";
   productId: string | null;
+  /** セットのとき: 1セットあたりの内訳 */
+  components?: { segmentName: string; name: string; quantity: number; surcharge: number }[];
   name: string;
   quantity: number;
   unitPrice: number;

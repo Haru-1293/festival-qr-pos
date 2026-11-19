@@ -1,6 +1,8 @@
 import { Ban, Check, CloudOff, ShoppingCart, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ProductDto } from "@shared/api";
+import type { ProductDto, SetDto } from "@shared/api";
+import { SetPicker } from "@/components/SetPicker";
+import { viewCartLine } from "@/lib/cartView";
 import { PriceView } from "@/components/PriceView";
 import { ErrorText, Shell } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +28,8 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
   const [notice, setNotice] = useState<string | null>(null);
   const first = useRef(true);
   const toggle = useAction();
-  const { cart, add, remove, clear } = useCart(shopId);
+  const { cart, add, change, remove, clear } = useCart(shopId);
+  const [picking, setPicking] = useState<SetDto | null>(null);
   const [checkout, setCheckout] = useState(false);
 
   // 価格・売り切れが変わったら、画面上部に知らせる(最初の読み込みでは出さない)
@@ -61,15 +64,24 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
     });
   };
 
-  const count = Object.values(cart).reduce((a, b) => a + b, 0);
-  const total = Object.entries(cart).reduce((sum, [id, q]) => sum + (catalog?.products.find((p) => p.id === id)?.salePrice ?? 0) * q, 0);
+  const setSetSoldOut = (s: SetDto, soldOut: boolean) => {
+    void toggle.run(async () => {
+      await api(`/pos/${shopId}/sets/${s.id}/sold-out`, { body: { soldOut } });
+      await refresh();
+    });
+  };
+
+  const count = cart.reduce((a, l) => a + l.quantity, 0);
+  const total = cart.reduce((sum, l) => sum + viewCartLine(l, catalog?.products ?? [], catalog?.sets ?? []).unit * l.quantity, 0);
+  const inCart = (id: string) => cart.filter((l) => l.productId === id || l.setId === id).reduce((a, l) => a + l.quantity, 0);
 
   const body = checkout ? (
     <Checkout
       shopId={shopId}
       products={catalog?.products ?? []}
+      sets={catalog?.sets ?? []}
       cart={cart}
-      onChange={add}
+      onChange={change}
       onRemove={remove}
       onClose={() => setCheckout(false)}
       onFinished={() => {
@@ -117,6 +129,47 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
 
         {!catalog && <p className="p-6 text-center text-sm text-muted-foreground">読み込み中…</p>}
         {catalog && items.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">販売中の商品がありません</p>}
+        {(catalog?.sets.length ?? 0) > 0 && (
+          <section aria-label="セット" className="flex flex-col gap-2">
+            <p className="text-sm font-bold text-muted-foreground">セット</p>
+            <div className="grid grid-cols-2 gap-3">
+              {catalog!.sets.map((st) => (
+                <Card key={st.id} className={cn("flex flex-col gap-2 p-3", !st.available && "opacity-60")}>
+                  <button
+                    type="button"
+                    className="flex flex-col gap-2 text-left disabled:cursor-not-allowed"
+                    disabled={!st.available}
+                    onClick={() => setPicking(st)}
+                    aria-label={`${st.name}の内訳を選ぶ`}
+                  >
+                    <p className="line-clamp-2 min-h-[2.5rem] text-sm font-bold leading-tight">{st.name}</p>
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="text-lg font-extrabold">
+                        {st.cutAmount > 0 && <span className="mr-1 text-xs font-medium text-muted-foreground line-through">{money(st.price)}</span>}
+                        {money(st.salePrice)}
+                      </span>
+                      {inCart(st.id) > 0 ? <Badge>{inCart(st.id)}</Badge> : null}
+                    </span>
+                  </button>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {!st.available && <Badge variant="destructive">{st.unavailableReason === "NO_OPTIONS" ? "売り切れ(内訳なし)" : "売り切れ"}</Badge>}
+                    {st.segments.some((g) => g.items.some((i) => i.surcharge > 0)) && <Badge variant="muted">追加料金あり</Badge>}
+                  </div>
+                  {st.manualSoldOut ? (
+                    <Button size="sm" variant="outline" onClick={() => setSetSoldOut(st, false)} disabled={toggle.pending}>
+                      <Check className="!size-4" /> 販売再開
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="outline" onClick={() => setSetSoldOut(st, true)} disabled={toggle.pending || !st.available}>
+                      <Ban className="!size-4" /> 売り切れにする
+                    </Button>
+                  )}
+                </Card>
+              ))}
+            </div>
+            <p className="text-sm font-bold text-muted-foreground">単品</p>
+          </section>
+        )}
         <div className="grid grid-cols-2 gap-3">
           {items.map((p) => (
             <Card key={p.id} className={cn("flex flex-col gap-2 p-3", p.soldOut && "opacity-60")}>
@@ -124,13 +177,13 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
                 type="button"
                 className="flex flex-col gap-2 text-left disabled:cursor-not-allowed"
                 disabled={p.soldOut || p.salePrice === null}
-                onClick={() => add(p.id, 1)}
+                onClick={() => add({ productId: p.id }, 1)}
                 aria-label={`${p.name}をカートに入れる`}
               >
                 <p className="line-clamp-2 min-h-[2.5rem] text-sm font-bold leading-tight">{p.name}</p>
                 <span className="flex items-center justify-between gap-2">
                   <PriceView p={p} className="text-lg" />
-                  {cart[p.id] ? <Badge>{cart[p.id]}</Badge> : null}
+                  {inCart(p.id) > 0 ? <Badge>{inCart(p.id)}</Badge> : null}
                 </span>
               </button>
               <div className="flex flex-wrap items-center gap-1.5">
@@ -149,6 +202,16 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
             </Card>
           ))}
         </div>
+        {picking && (
+          <SetPicker
+            set={picking}
+            onClose={() => setPicking(null)}
+            onAdd={(picks, q) => {
+              add({ setId: picking.id, picks }, q);
+              setPicking(null);
+            }}
+          />
+        )}
         {count > 0 && (
           <div className="sticky bottom-0 -mx-4 border-t border-border bg-background px-4 py-3">
             <Button size="lg" className="w-full justify-between" onClick={() => setCheckout(true)}>
