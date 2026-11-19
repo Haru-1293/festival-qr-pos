@@ -64,6 +64,8 @@ export interface LookupResponse {
   lookupId: string;
   expiresAt: number;
   wallet: { id: string; nickname: string | null; balance: number; status: "ACTIVE" | "SUSPENDED" | "CLOSED" };
+  /** 物理カードを読み取ったとき。払戻しにはPINが必要 */
+  card?: { displayNo: string };
   yenPerUnit: number;
 }
 
@@ -323,6 +325,8 @@ export interface PaySession {
   quote: Quote;
   /** 残高が足りないとき、不足額。足りているなら 0 */
   shortfall: number;
+  /** 物理カードでの支払い。確定にはPIN(4桁)が必要 */
+  card?: { displayNo: string };
 }
 
 export interface PayResult {
@@ -414,4 +418,36 @@ export interface HistoryItem {
   shopName: string | null;
   /** 決済・返金のときの取引番号 */
   orderNo: string | null;
+}
+
+// ---------- 物理カード ----------
+export type CardStatus = "ISSUED" | "ACTIVE" | "SUSPENDED" | "EXPIRED" | "DELETED";
+
+export interface CardDto {
+  id: string;
+  displayNo: string;
+  /** 期限切れは表示上 EXPIRED にする(保存されている状態は ACTIVE のまま) */
+  status: CardStatus;
+  nickname: string | null;
+  balance: number | null;
+  walletStatus: "ACTIVE" | "SUSPENDED" | "CLOSED" | null;
+  expiresAt: number | null;
+  issueBatch: string | null;
+  memo: string | null;
+  issuedAt: number;
+  activatedAt: number | null;
+  suspendedAt: number | null;
+  suspendReason: string | null;
+  deletedAt: number | null;
+  deleteReason: string | null;
+  lastUsedAt: number | null;
+  reissuedFrom: string | null;
+}
+
+/** 発行・再生成の直後だけ返す、印刷用のQR内容(サーバーにはハッシュしか残らない) */
+export interface IssuedCard {
+  id: string;
+  displayNo: string;
+  token: string;
+  expiresAt: number;
 }

@@ -4,11 +4,12 @@ import type { PaySession, PayStatus, Quote } from "@shared/api";
 import type { AppEnv } from "../env";
 import { auditStmt, auditStmtIfExists } from "../lib/audit";
 import { bumpCatalogStmt, buildPosCatalog } from "../lib/catalog";
-import { sha256Hex } from "../lib/crypto";
+import { cardUsableSql } from "../lib/cards";
+import { sha256Hex, verifyPin } from "../lib/crypto";
 import { badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { newId } from "../lib/ids";
 import { loadPayResult, orderNo, quoteCart, type CartQuote } from "../lib/order";
-import { WALLET_QR_PATTERN } from "../lib/qr";
+import { CARD_QR_PATTERN, WALLET_QR_PATTERN } from "../lib/qr";
 import { getOperations } from "../lib/settings";
 import { zv as zValidator } from "../lib/validate";
 import { assertShopAccess, requireAuth, requireRole } from "../middleware/auth";
@@ -138,7 +139,8 @@ export const posRoutes = new Hono<AppEnv>()
       const { shopId } = c.req.valid("param");
       assertShopAccess(auth, shopId);
       const { token, items } = c.req.valid("json");
-      if (!WALLET_QR_PATTERN.test(token)) throw badRequest("お客様のQRではありません", "INVALID_QR");
+      const isCard = CARD_QR_PATTERN.test(token);
+      if (!isCard && !WALLET_QR_PATTERN.test(token)) throw badRequest("お客様のQRではありません", "INVALID_QR");
       const db = c.env.DB;
       const now = Date.now();
       const shop = await db.prepare("SELECT status FROM shops WHERE id = ?").bind(shopId).first<{ status: string }>();
@@ -154,6 +156,44 @@ export const posRoutes = new Hono<AppEnv>()
       const { paymentSessionSeconds } = await getOperations(db);
       const expiresAt = now + paymentSessionSeconds * 1000;
       const cart = JSON.stringify(items);
+
+      // 物理カード: QRは固定で消費しない。カードが使えるときだけ決済セッションを作り、確定時にPIN(4桁)を確認する
+      if (isCard) {
+        const card = await db
+          .prepare(
+            `SELECT c.id, c.status, c.expires_at, c.nickname, c.display_no, c.wallet_id, w.status AS wstatus, w.balance
+               FROM cards c LEFT JOIN wallets w ON w.id = c.wallet_id WHERE c.qr_token_hash = ?`,
+          )
+          .bind(hash)
+          .first<{ id: string; status: string; expires_at: number | null; nickname: string | null; display_no: string; wallet_id: string | null; wstatus: string | null; balance: number | null }>();
+        if (!card) throw badRequest("このカードは登録されていないか、無効になっています", "INVALID_QR");
+        if (card.status === "ISSUED") throw forbidden("このカードはまだ有効化されていません。受付にお問い合わせください", "CARD_INACTIVE");
+        if (card.status === "SUSPENDED") throw forbidden("このカードは一時停止中です。受付にお問い合わせください", "CARD_INACTIVE");
+        if (card.status !== "ACTIVE") throw forbidden("このカードは使えません", "CARD_INACTIVE");
+        if (card.expires_at !== null && card.expires_at <= now) throw forbidden("このカードは有効期限が切れています", "CARD_EXPIRED");
+        if (card.wstatus !== "ACTIVE") throw forbidden("このカードのウォレットは現在ご利用できません", "WALLET_INACTIVE");
+        const res = await db.batch([
+          db
+            .prepare(
+              `INSERT INTO payment_sessions (id, shop_id, clerk_user_id, wallet_id, pay_source, card_id, cart_json, status, created_at, expires_at)
+               SELECT ?, ?, ?, c.wallet_id, 'CARD', c.id, ?, 'OPEN', ?, ? FROM cards c
+                WHERE c.qr_token_hash = ? AND ${cardUsableSql("c")}`,
+            )
+            .bind(sessionId, shopId, auth.userId, cart, now, expiresAt, hash, now),
+        ]);
+        if ((res[0].meta.changes ?? 0) !== 1) throw forbidden("このカードは使えません。もう一度読み取ってください", "CARD_INACTIVE");
+        await db.batch([
+          auditStmt(db, { actor: auth, action: "payment.scan", targetType: "payment_session", targetId: sessionId, after: { shopId, total: quote.total, card: card.display_no } }),
+        ]);
+        return c.json({
+          sessionId,
+          expiresAt,
+          customer: { nickname: card.nickname, balance: card.balance ?? 0 },
+          quote: publicQuote(quote),
+          shortfall: Math.max(0, quote.total - (card.balance ?? 0)),
+          card: { displayNo: card.display_no },
+        } satisfies PaySession);
+      }
 
       // 持ち主のアカウントが停止中なら、QRを消費せずに断る
       const owner = await db
@@ -234,12 +274,12 @@ export const posRoutes = new Hono<AppEnv>()
   .post(
     "/:shopId/pay/:sessionId/commit",
     sessionParam,
-    zValidator("json", z.object({ requestId: requestIdSchema, expectedTotal: z.number().int().min(1) })),
+    zValidator("json", z.object({ requestId: requestIdSchema, expectedTotal: z.number().int().min(1), pin: z.string().regex(/^[0-9]{4}$/, "PINは4桁の数字です").optional() })),
     async (c) => {
       const auth = requireAuth(c);
       const { shopId, sessionId } = c.req.valid("param");
       assertShopAccess(auth, shopId);
-      const { requestId, expectedTotal } = c.req.valid("json");
+      const { requestId, expectedTotal, pin } = c.req.valid("json");
       const db = c.env.DB;
 
       // 同じ requestId の再送 → 元の結果(新しい決済は作らない)
@@ -257,15 +297,34 @@ export const posRoutes = new Hono<AppEnv>()
       }
 
       const s = await db
-        .prepare("SELECT wallet_id, cart_json, status, expires_at, order_id FROM payment_sessions WHERE id = ? AND shop_id = ?")
+        .prepare("SELECT wallet_id, card_id, cart_json, status, expires_at, order_id FROM payment_sessions WHERE id = ? AND shop_id = ?")
         .bind(sessionId, shopId)
-        .first<{ wallet_id: string; cart_json: string; status: string; expires_at: number; order_id: string | null }>();
+        .first<{ wallet_id: string; card_id: string | null; cart_json: string; status: string; expires_at: number; order_id: string | null }>();
       if (!s) throw notFound("決済が見つかりません", "SESSION_NOT_FOUND");
       if (s.status === "COMMITTED") throw conflict("この決済はすでに確定しています", "SESSION_DONE");
       if (s.status === "CANCELLED") throw conflict("この決済は取り消されています。QRを読み取り直してください", "SESSION_CANCELLED");
       const now = Date.now();
       if (s.status === "EXPIRED" || s.expires_at < now) {
         throw conflict("決済の有効時間が切れました。お客様のQRを読み取り直してください", "SESSION_EXPIRED");
+      }
+
+      // 物理カードの支払いはPINが必要。PINが違えば確定せず、セッションはそのまま(画面側で3回まで入力できる)
+      let pinHash = "-";
+      if (s.card_id) {
+        if (!pin) throw badRequest("PINを入力してください", "PIN_REQUIRED");
+        const card = await db
+          .prepare("SELECT status, expires_at, pin_hash FROM cards WHERE id = ?")
+          .bind(s.card_id)
+          .first<{ status: string; expires_at: number | null; pin_hash: string | null }>();
+        if (!card || card.status !== "ACTIVE" || (card.expires_at !== null && card.expires_at <= now)) {
+          throw forbidden("このカードは使えなくなりました。受付にお問い合わせください", "CARD_INACTIVE");
+        }
+        if (!c.env.PIN_PEPPER) throw conflict("PIN_PEPPER が設定されていないため、カードを使えません", "PEPPER_MISSING");
+        if (!(await verifyPin(pin, card.pin_hash, c.env.PIN_PEPPER))) {
+          await db.batch([auditStmt(db, { actor: auth, action: "payment.pin_failed", targetType: "payment_session", targetId: sessionId })]);
+          throw forbidden("PINが違います", "PIN_INVALID");
+        }
+        pinHash = card.pin_hash!;
       }
 
       // 確定の瞬間の価格・値下げ・在庫で見積もり直す
@@ -336,9 +395,10 @@ export const posRoutes = new Hono<AppEnv>()
                 AND EXISTS (SELECT 1 FROM shops WHERE id = ? AND status = 'ACTIVE')
                 AND EXISTS (SELECT 1 FROM wallets w WHERE w.id = payment_sessions.wallet_id AND w.status = 'ACTIVE'
                       AND (w.owner_user_id IS NULL OR EXISTS (SELECT 1 FROM users u WHERE u.id = w.owner_user_id AND u.status = 'ACTIVE')))
-                AND ${cutGuard}`,
+                AND ${cutGuard}
+                AND (payment_sessions.card_id IS NULL OR EXISTS (SELECT 1 FROM cards cd WHERE cd.id = payment_sessions.card_id AND cd.pin_hash = ? AND ${cardUsableSql("cd")}))`,
           )
-          .bind(sessionId, shopId, now, shopId, shopId, now, now, quote.cut?.id ?? "-"),
+          .bind(sessionId, shopId, now, shopId, shopId, now, now, quote.cut?.id ?? "-", pinHash, now),
         ...chunks.map((ch) =>
           db
             .prepare(
@@ -351,8 +411,8 @@ export const posRoutes = new Hono<AppEnv>()
       stmts.push(
         db
           .prepare(
-            `INSERT INTO orders (id, order_no, shop_id, clerk_user_id, wallet_id, pay_source, subtotal, discount_total, total_paid, status, idempotency_key, paid_at)
-             SELECT ?, ?, ?, ?, s.wallet_id, 'PHONE_QR', ?, 0, ?, 'PAID', ?, ? FROM payment_sessions s
+            `INSERT INTO orders (id, order_no, shop_id, clerk_user_id, wallet_id, pay_source, subtotal, discount_total, total_paid, status, idempotency_key, paid_at, card_id)
+             SELECT ?, ?, ?, ?, s.wallet_id, s.pay_source, ?, 0, ?, 'PAID', ?, ?, s.card_id FROM payment_sessions s
               WHERE s.id = ? AND s.status = 'COMMITTED' AND s.order_id IS NULL`,
           )
           .bind(orderId, orderNo(orderId), shopId, auth.userId, quote.total, quote.total, requestId, now, sessionId),
@@ -450,6 +510,13 @@ export const posRoutes = new Hono<AppEnv>()
         const cur = await db.prepare("SELECT status, order_id FROM payment_sessions WHERE id = ?").bind(sessionId).first<{ status: string; order_id: string | null }>();
         if (cur?.status === "COMMITTED" && cur.order_id) return c.json({ ...(await loadPayResult(db, cur.order_id))!, replayed: true });
         if (cur?.status !== "OPEN") throw conflict("この決済は確定できません。状態を確認してください", "SESSION_DONE");
+        if (s.card_id) {
+          const still = await db
+            .prepare(`SELECT 1 FROM cards c WHERE c.id = ? AND c.pin_hash = ? AND ${cardUsableSql("c")}`)
+            .bind(s.card_id, pinHash, now2)
+            .first();
+          if (!still) throw forbidden("このカードは使えなくなりました。受付にお問い合わせください", "CARD_INACTIVE");
+        }
         const fresh = await quoteCart(db, shopId, JSON.parse(s.cart_json), now2);
         throw conflict("価格や在庫が変わりました。もう一度確認してください", "PRICE_CHANGED", { quote: publicQuote(fresh) });
       }

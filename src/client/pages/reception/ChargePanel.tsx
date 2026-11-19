@@ -2,6 +2,7 @@ import { Banknote, CircleCheck, HandCoins, ScanLine } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { CashOpResult, LookupResponse } from "@shared/api";
 import { cashToUnits, unitsToCash } from "@shared/currency";
+import { PinPad } from "@/components/PinPad";
 import { QrScanner, scannerSupported } from "@/components/QrScanner";
 import { ErrorText } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,8 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
   const [token, setToken] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [pin, setPin] = useState("");
+  const [pinTries, setPinTries] = useState(0);
   const look = useAction();
   const op = useAction();
   const reqId = useRequestId();
@@ -60,6 +63,8 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
     (value: string) => {
       void look.run(async () => {
         const res = await api<LookupResponse>("/reception/lookup", { body: { token: value.trim() } });
+        setPin("");
+        setPinTries(0);
         setLookup(res);
         setMode("charge");
         setCash("");
@@ -110,16 +115,31 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
           mode === "charge"
             ? await api<CashOpResult>("/reception/charge", { body: { lookupId: lookup.lookupId, requestId: reqId.get(), cashAmount: cashNum } })
             : await api<CashOpResult>("/reception/payout", {
-                body: { lookupId: lookup.lookupId, requestId: reqId.get(), expectedBalance: lookup.wallet.balance },
+                body: { lookupId: lookup.lookupId, requestId: reqId.get(), expectedBalance: lookup.wallet.balance, ...(lookup.card ? { pin } : {}) },
               });
         setDone({ kind: mode, data, nickname: lookup.wallet.nickname });
+        setPin("");
         setLookup(null);
         setConfirming(false);
         reqId.renew();
         onChanged();
       } catch (e) {
+        // PINが違う: 3回までは入力し直し。3回間違えたらカードの読み取りからやり直す(画面側の制限)
+        if (e instanceof ApiRequestError && e.code === "PIN_INVALID") {
+          const tries = pinTries + 1;
+          setPin("");
+          setPinTries(tries);
+          if (tries >= 3) {
+            setLookup(null);
+            setConfirming(false);
+            reqId.renew();
+            setLocalError("PINを3回間違えました。もう一度カードを読み取ってください");
+            throw e;
+          }
+          throw new Error(`PINが違います(あと${3 - tries}回)`);
+        }
         // 読み取りの期限切れ・残高の変化などは、QRの読み取りからやり直す
-        if (e instanceof ApiRequestError && RESCAN_CODES.has(e.code)) {
+        if (e instanceof ApiRequestError && (RESCAN_CODES.has(e.code) || e.code === "CARD_INACTIVE")) {
           setLookup(null);
           setConfirming(false);
           reqId.renew();
@@ -177,7 +197,7 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
                 doLookup(token);
               }}
             >
-              <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder="FES1:U:…" autoCapitalize="none" autoCorrect="off" />
+              <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder="FES1:U:… / FES1:C:…" autoCapitalize="none" autoCorrect="off" />
               <Button type="submit" variant="outline" disabled={look.pending || !token.trim()}>
                 確認
               </Button>
@@ -195,7 +215,10 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
       <Card className="overflow-hidden">
         <div className="bg-secondary px-4 py-4">
           <div className="flex items-center justify-between gap-2">
-            <p className="truncate text-base font-bold">{w.nickname ?? "お客様"} さん</p>
+            <p className="truncate text-base font-bold">
+              {w.nickname ?? "お客様"} さん
+              {lookup.card && <span className="ml-2 text-xs font-medium text-muted-foreground">カード {lookup.card.displayNo}</span>}
+            </p>
             {!active && <Badge variant="warning">利用停止中</Badge>}
           </div>
           <p className="mt-1 text-sm text-secondary-foreground">現在の残高</p>
@@ -302,11 +325,17 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
                 <p className="text-sm text-muted-foreground">
                   {mode === "charge" ? `${money(units ?? 0)} をチャージします。` : "確定すると残高が0になります。確定後に現金をお渡しください。"}
                 </p>
+                {mode === "payout" && lookup.card && (
+                  <div className="flex flex-col gap-2 rounded-lg bg-muted p-3">
+                    <p className="text-center text-sm font-semibold">現金をお渡しするため、カードのPIN(4桁)を入力してもらってください</p>
+                    <PinPad value={pin} onChange={setPin} disabled={op.pending} />
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <Button variant="outline" onClick={() => setConfirming(false)} disabled={op.pending}>
                     戻る
                   </Button>
-                  <Button className="flex-1" size="lg" onClick={submit} disabled={op.pending}>
+                  <Button className="flex-1" size="lg" onClick={submit} disabled={op.pending || (mode === "payout" && !!lookup.card && pin.length !== 4)}>
                     {op.pending ? "処理中…" : mode === "charge" ? "チャージを確定" : "払い戻しを確定"}
                   </Button>
                 </div>

@@ -71,3 +71,15 @@ select,
 input {
   touch-action: manipulation;
 }
+
+/* カードの印刷シート: 開いている間は、印刷時にシートだけを出す(画面の他の部分は隠す) */
+@media print {
+  body.print-sheet-open > #root {
+    display: none !important;
+  }
+  body.print-sheet-open .sheet-host {
+    position: static !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+}

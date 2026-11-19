@@ -1,6 +1,7 @@
 import { ArrowLeft, CircleCheck, Minus, Plus, ScanLine, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PayResult, PaySession, PayStatus, ProductDto, Quote, QuoteLine, SetDto } from "@shared/api";
+import { PinPad } from "@/components/PinPad";
 import { QrScanner, scannerSupported } from "@/components/QrScanner";
 import { ErrorText } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
@@ -14,7 +15,9 @@ import { type Cart, toCartItems } from "@/lib/useCart";
 import { useRequestId } from "@/lib/useRequestId";
 import { cn, formatDateTime } from "@/lib/utils";
 
-type Step = "cart" | "scan" | "confirm" | "unknown" | "done";
+type Step = "cart" | "scan" | "pin" | "confirm" | "unknown" | "done";
+/** PINを続けて間違えたら、お客様のQR(カード)を読み取り直す。画面側の制限(サーバーはカード単位でロックしない) */
+const MAX_PIN_TRIES = 3;
 
 interface Props {
   shopId: string;
@@ -42,6 +45,8 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [pin, setPin] = useState("");
+  const [pinTries, setPinTries] = useState(0);
   const reqId = useRequestId();
   const renewReq = reqId.renew;
 
@@ -55,7 +60,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
   latest.current = { items, localTotal };
 
   useEffect(() => {
-    if (step !== "confirm") return;
+    if (step !== "confirm" && step !== "pin") return;
     const t = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(t);
   }, [step]);
@@ -81,7 +86,9 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
         renewReq();
         setNow(Date.now());
         if (s.quote.total !== latest.current.localTotal) setNotice("価格が更新されました。新しい合計を確認してください");
-        setStep("confirm");
+        setPin("");
+        setPinTries(0);
+        setStep(s.card ? "pin" : "confirm");
       } catch (e) {
         if (e instanceof ApiRequestError && e.code === "CART_UNAVAILABLE") showCartProblem(e);
         else setError(errorMessage(e));
@@ -126,8 +133,9 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
     setNotice(null);
     try {
       const r = await api<PayResult>(`/pos/${shopId}/pay/${session.sessionId}/commit`, {
-        body: { requestId: reqId.get(), expectedTotal: quote.total },
+        body: { requestId: reqId.get(), expectedTotal: quote.total, ...(session.card ? { pin } : {}) },
       });
+      setPin("");
       setResult(r);
       setStep("done");
     } catch (e) {
@@ -150,6 +158,29 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
         if (e.code === "CART_UNAVAILABLE") {
           showCartProblem(e);
           setError(`${errorMessage(e)}(お客様のQRは読み取り済みです。カートを直して、もう一度QRを表示してもらってください)`);
+          return;
+        }
+        if (e.code === "PIN_INVALID") {
+          const tries = pinTries + 1;
+          setPin("");
+          setPinTries(tries);
+          if (tries >= MAX_PIN_TRIES) {
+            // 3回間違えたら、この読み取りは終わり。カードを読み取り直してもらう
+            await api(`/pos/${shopId}/pay/${session.sessionId}/cancel`, { body: {} }).catch(() => undefined);
+            setSession(null);
+            setQuote(null);
+            setError(`PINを${MAX_PIN_TRIES}回間違えました。もう一度カードを読み取ってください`);
+            setStep("scan");
+          } else {
+            setError(`PINが違います(あと${MAX_PIN_TRIES - tries}回)`);
+            setStep("pin");
+          }
+          return;
+        }
+        if (e.code === "CARD_INACTIVE") {
+          setError(e.message);
+          setSession(null);
+          setStep("scan");
           return;
         }
         if (e.code === "SESSION_EXPIRED" || e.code === "SESSION_CANCELLED") {
@@ -213,6 +244,35 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
     );
   }
 
+  // ---------- 物理カード: PIN入力 ----------
+  if (step === "pin" && session && quote) {
+    const left = Math.max(0, Math.ceil((session.expiresAt - now) / 1000));
+    return (
+      <div className="flex flex-col gap-3">
+        <Card className="overflow-hidden">
+          <div className="bg-secondary px-4 py-4">
+            <p className="text-sm text-secondary-foreground">
+              {session.customer.nickname ?? "お客様"} さんのカード{session.card ? `(${session.card.displayNo})` : ""}
+            </p>
+            <p className="mt-1 text-4xl font-extrabold tracking-tight">{money(quote.total)}</p>
+          </div>
+          <CardContent className="flex flex-col gap-3 pt-4">
+            <p className="text-center text-sm font-semibold">お客様に、4桁のPINを入力してもらってください</p>
+            <PinPad value={pin} onChange={setPin} disabled={busy} />
+            <ErrorText message={error} />
+            <p className="text-center text-xs text-muted-foreground">この確認の有効時間 あと {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}</p>
+          </CardContent>
+        </Card>
+        <Button size="lg" onClick={() => { setError(null); setStep("confirm"); }} disabled={pin.length !== 4 || left === 0}>
+          次へ(内容の確認)
+        </Button>
+        <Button variant="outline" onClick={() => void cancel()} disabled={busy}>
+          取り消す
+        </Button>
+      </div>
+    );
+  }
+
   // ---------- 支払いの確認 ----------
   if (step === "confirm" && session && quote) {
     const left = Math.max(0, Math.ceil((session.expiresAt - now) / 1000));
@@ -223,7 +283,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
         <Card className="overflow-hidden">
           <div className="bg-secondary px-4 py-4">
             <p className="text-sm text-secondary-foreground">{session.customer.nickname ?? "お客様"} さん</p>
-            <p className="text-sm text-muted-foreground">残高 {money(session.customer.balance)}</p>
+            <p className="text-sm text-muted-foreground">{session.card ? `カード ${session.card.displayNo} ・ ` : ""}残高 {money(session.customer.balance)}</p>
             <p className="mt-1 text-4xl font-extrabold tracking-tight">{money(quote.total)}</p>
             {quote.cut && <Badge variant="destructive" className="mt-1">{quote.cut.name} 適用中</Badge>}
           </div>
@@ -260,7 +320,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
           <CardContent className="flex flex-col gap-3 pt-4">
             <p className="text-center text-sm text-muted-foreground">合計</p>
             <p className="text-center text-4xl font-extrabold tracking-tight">{money(localTotal)}</p>
-            <p className="text-center text-sm font-semibold">お客様のQRを読み取ってください</p>
+            <p className="text-center text-sm font-semibold">お客様のQR(スマホ画面またはカード)を読み取ってください</p>
             {scanning ? (
               <QrScanner onScan={(v) => void scan(v)} onClose={() => setScanning(false)} />
             ) : (
@@ -277,7 +337,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
                   void scan(token);
                 }}
               >
-                <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder="FES1:U:…" autoComplete="off" />
+                <Input value={token} onChange={(e) => setToken(e.target.value)} placeholder="FES1:U:… / FES1:C:…" autoComplete="off" />
                 <Button type="submit" variant="outline" disabled={busy || !token.trim()}>
                   確認
                 </Button>
