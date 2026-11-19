@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Shell } from "@/components/Shell";
 import { cn } from "@/lib/utils";
 import { CardManager } from "./CardManager";
+import { AdminRefunds } from "./AdminRefunds";
 import { DiscountManager } from "./DiscountManager";
 import { AdminCash } from "./AdminCash";
 import { AdminSettings } from "./AdminSettings";
@@ -12,6 +13,7 @@ const TABS = [
   { id: "shops", label: "店舗" },
   { id: "users", label: "スタッフ・利用者" },
   { id: "cards", label: "カード" },
+  { id: "refunds", label: "返金" },
   { id: "discounts", label: "割引" },
   { id: "cash", label: "現金" },
   { id: "settings", label: "設定" },
@@ -23,7 +25,7 @@ export function AdminHome() {
   return (
     <Shell title="全体管理" wide>
       <div className="flex flex-col gap-4">
-        <div role="tablist" className="flex gap-1 rounded-xl bg-accent p-1">
+        <div role="tablist" className="flex gap-1 overflow-x-auto rounded-xl bg-accent p-1">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -31,7 +33,7 @@ export function AdminHome() {
               aria-selected={tab === t.id}
               onClick={() => setTab(t.id)}
               className={cn(
-                "h-10 flex-1 rounded-lg text-sm font-semibold transition-colors",
+                "h-10 shrink-0 flex-1 whitespace-nowrap rounded-lg px-3 text-sm font-semibold transition-colors",
                 tab === t.id ? "bg-card shadow-sm" : "text-muted-foreground hover:text-foreground",
               )}
             >
@@ -42,6 +44,7 @@ export function AdminHome() {
         {tab === "shops" && <AdminShops />}
         {tab === "users" && <AdminUsers />}
         {tab === "cards" && <CardManager />}
+        {tab === "refunds" && <AdminRefunds />}
         {tab === "discounts" && <DiscountManager />}
         {tab === "cash" && <AdminCash />}
         {tab === "settings" && <AdminSettings />}
