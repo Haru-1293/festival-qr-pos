@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { OrderDetail, OrderLineDto, OrderStatus, OrderSummary, RefundDto, RefundKind, RefundResult } from "@shared/api";
+import type { OrderDetail, OrderLineDto, OrderStatus, OrderSummary, QuoteDiscount, RefundDto, RefundKind, RefundResult } from "@shared/api";
 import type { AppEnv } from "../env";
 import { auditStmtIfExists } from "../lib/audit";
 import { bumpCatalogStmt } from "../lib/catalog";
@@ -25,6 +25,7 @@ interface OrderRow {
   shop_id: string;
   wallet_id: string;
   total_paid: number;
+  discount_total: number;
   refunded_total: number;
   status: OrderStatus;
   paid_at: number;
@@ -45,7 +46,7 @@ interface LineRow {
 
 async function loadOrder(db: D1Database, orderId: string): Promise<OrderRow> {
   const o = await db
-    .prepare("SELECT id, shop_id, wallet_id, total_paid, refunded_total, status, paid_at FROM orders WHERE id = ?")
+    .prepare("SELECT id, shop_id, wallet_id, total_paid, discount_total, refunded_total, status, paid_at FROM orders WHERE id = ?")
     .bind(orderId)
     .first<OrderRow>();
   if (!o) throw notFound("注文が見つかりません");
@@ -109,11 +110,11 @@ export const refundRoutes = new Hono<AppEnv>()
         .all<LineRow>(),
       db
         .prepare(
-          `SELECT r.id, r.kind, r.amount, r.reason, r.created_at, u.nickname FROM refunds r LEFT JOIN users u ON u.id = r.operator_user_id
+          `SELECT r.id, r.kind, r.amount, r.reason, r.created_at, r.coupon_restored, u.nickname FROM refunds r LEFT JOIN users u ON u.id = r.operator_user_id
             WHERE r.order_id = ? ORDER BY r.created_at`,
         )
         .bind(orderId)
-        .all<{ id: string; kind: RefundKind; amount: number; reason: string; created_at: number; nickname: string | null }>(),
+        .all<{ id: string; kind: RefundKind; amount: number; reason: string; created_at: number; coupon_restored: number; nickname: string | null }>(),
       db
         .prepare(
           `SELECT rl.refund_id, ol.name_snapshot, rl.quantity, rl.amount, rl.restore_stock FROM refund_lines rl
@@ -137,6 +138,13 @@ export const refundRoutes = new Hono<AppEnv>()
         .bind(orderId)
         .all<{ order_line_id: string; segment: string; name: string; quantity: number; surcharge: number }>(),
     ]);
+    const [{ results: discs }, used] = await Promise.all([
+      db
+        .prepare("SELECT kind, discount_id, coupon_id, name_snapshot, amount FROM order_discounts WHERE order_id = ? ORDER BY apply_seq")
+        .bind(orderId)
+        .all<{ kind: QuoteDiscount["kind"]; discount_id: string | null; coupon_id: string | null; name_snapshot: string; amount: number }>(),
+      db.prepare("SELECT 1 AS x FROM coupon_redemptions WHERE order_id = ? AND status = 'USED'").bind(orderId).first(),
+    ]);
     const detail: OrderDetail = {
       id: o.id,
       orderNo: orderNo(o.id),
@@ -149,6 +157,9 @@ export const refundRoutes = new Hono<AppEnv>()
       shopName: meta?.shop ?? "",
       clerkNickname: meta?.clerk ?? null,
       refundable: o.total_paid - o.refunded_total,
+      subtotal: o.total_paid + o.discount_total,
+      discounts: discs.map((d) => ({ kind: d.kind, discountId: d.discount_id ?? "", couponId: d.coupon_id, name: d.name_snapshot, amount: d.amount })),
+      couponUsed: !!used,
       lines: lines.map(
         (l): OrderLineDto => ({
           id: l.id,
@@ -178,6 +189,7 @@ export const refundRoutes = new Hono<AppEnv>()
           reason: r.reason,
           operatorNickname: r.nickname,
           createdAt: r.created_at,
+          couponRestored: r.coupon_restored === 1,
           lines: rlines
             .filter((x) => x.refund_id === r.id)
             .map((x) => ({ name: x.name_snapshot, quantity: x.quantity, amount: x.amount, restoreStock: x.restore_stock === 1 })),
@@ -206,6 +218,8 @@ export const refundRoutes = new Hono<AppEnv>()
           .optional(),
         /** FULL のとき、全商品を在庫へ戻すか */
         restoreStock: z.boolean().optional(),
+        /** FULL のとき、使ったクーポンを使える状態へ戻すか(既定は戻す。仕様 v0.2 §14.6 / §18.7) */
+        restoreCoupon: z.boolean().optional(),
         amount: z.number().int().min(1).max(10_000_000).optional(),
         /** 画面で確認した返金額。サーバーの計算と違えば実行しない */
         expectedAmount: z.number().int().min(1),
@@ -284,6 +298,11 @@ export const refundRoutes = new Hono<AppEnv>()
       }
 
       const now = Date.now();
+      // 全額取消(FULL)のときだけ、使ったクーポンを戻す。部分返金では戻さない
+      const usedCoupon =
+        b.kind === "FULL" && b.restoreCoupon !== false
+          ? await db.prepare("SELECT 1 AS x FROM coupon_redemptions WHERE order_id = ? AND status = 'USED'").bind(orderId).first()
+          : null;
       const refundId = newId(now);
       const ledgerId = newId(now);
       const refundExists = "EXISTS (SELECT 1 FROM refunds WHERE id = ?)";
@@ -304,9 +323,9 @@ export const refundRoutes = new Hono<AppEnv>()
         db
           .prepare(
             `INSERT INTO refunds (id, order_id, kind, amount, reason, operator_user_id, coupon_restored, ledger_id, idempotency_key, created_at)
-             SELECT ?, ?, ?, ?, ?, ?, 0, ?, ?, ? WHERE ${ledgerExists}`,
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${ledgerExists}`,
           )
-          .bind(refundId, orderId, b.kind, amount, b.reason, auth.userId, ledgerId, b.requestId, now, ledgerId),
+          .bind(refundId, orderId, b.kind, amount, b.reason, auth.userId, usedCoupon ? 1 : 0, ledgerId, b.requestId, now, ledgerId),
         // ④ 注文の返金済み額・状態(上限を超えれば CHECK 制約が全体を巻き戻す)
         db
           .prepare(
@@ -316,6 +335,19 @@ export const refundRoutes = new Hono<AppEnv>()
           )
           .bind(amount, amount, orderId, refundId),
       ];
+      if (usedCoupon) {
+        stmts.push(
+          db
+            .prepare(
+              `UPDATE coupons SET used_count = MAX(used_count - 1, 0)
+                WHERE id IN (SELECT coupon_id FROM coupon_redemptions WHERE order_id = ? AND status = 'USED') AND ${refundExists}`,
+            )
+            .bind(orderId, refundId),
+          db
+            .prepare(`UPDATE coupon_redemptions SET status = 'RESTORED', restored_at = ? WHERE order_id = ? AND status = 'USED' AND ${refundExists}`)
+            .bind(now, orderId, refundId),
+        );
+      }
       let restored = false;
       for (const p of picks) {
         stmts.push(

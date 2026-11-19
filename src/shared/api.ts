@@ -310,8 +310,24 @@ export interface QuoteProblem {
   available?: number;
 }
 
+/** 見積もり・注文に適用された割引(計算順に並ぶ: 全ユーザー割引 → クーポン) */
+export interface QuoteDiscount {
+  kind: "AUTO" | "COMMON_COUPON" | "ONE_TIME_COUPON";
+  discountId: string;
+  couponId: string | null;
+  name: string;
+  amount: number;
+}
+
 export interface Quote {
   lines: QuoteLine[];
+  /** 割引前の小計 */
+  subtotal: number;
+  discounts: QuoteDiscount[];
+  discountTotal: number;
+  /** 入力されたクーポンが使えない理由(使えるなら null)。使えなくてもカートの会計は続けられる */
+  couponError: string | null;
+  /** 割引後の支払い額 */
   total: number;
   cut: { id: string; name: string } | null;
   problems: QuoteProblem[];
@@ -336,6 +352,8 @@ export interface PayResult {
   balanceAfter: number;
   paidAt: number;
   lines: QuoteLine[];
+  subtotal: number;
+  discounts: QuoteDiscount[];
   replayed?: boolean;
 }
 
@@ -384,6 +402,7 @@ export interface RefundDto {
   reason: string;
   operatorNickname: string | null;
   createdAt: number;
+  couponRestored: boolean;
   lines: { name: string; quantity: number; amount: number; restoreStock: boolean }[];
 }
 
@@ -393,6 +412,11 @@ export interface OrderDetail extends OrderSummary {
   clerkNickname: string | null;
   /** 返金できる残りの金額(実支払額 − 返金済みの合計) */
   refundable: number;
+  subtotal: number;
+  /** 適用された割引(計算順) */
+  discounts: QuoteDiscount[];
+  /** 使ったクーポンがまだ「使用済み」のままか(全額取消で戻せる) */
+  couponUsed: boolean;
   lines: OrderLineDto[];
   refunds: RefundDto[];
 }
@@ -450,4 +474,78 @@ export interface IssuedCard {
   displayNo: string;
   token: string;
   expiresAt: number;
+}
+
+// ---------- 割引・クーポン(全体管理者) ----------
+export type DiscountMethod = "PERCENT" | "FIXED";
+export type DiscountStatus = "ACTIVE" | "STOPPED" | "ENDED";
+
+export interface DiscountRuleInput {
+  name: string;
+  method: DiscountMethod;
+  value: number;
+  minOrderAmount: number | null;
+  maxDiscountAmount: number | null;
+  startsAt: number | null;
+  endsAt: number | null;
+  /** 空なら全店舗 */
+  shopIds: string[];
+}
+
+export interface AutoDiscountInput extends DiscountRuleInput {
+  /** false のとき、クーポンとは併用できない(クーポン入力があると断る) */
+  combinableWithCoupon: boolean;
+}
+
+export interface CouponInput extends DiscountRuleInput {
+  kind: "COMMON" | "ONE_TIME";
+  /** 空のとき ONE_TIME は自動で作る。COMMON は必須 */
+  code?: string;
+  /** ONE_TIME のときこの枚数ぶん、コードを自動で作る(code が空のとき) */
+  count?: number;
+  totalLimit: number | null;
+  perWalletLimit: number | null;
+  /** 全ユーザー割引と併用できるか */
+  combinableWithAuto: boolean;
+  note: string | null;
+}
+
+export interface AutoDiscountDto {
+  id: string;
+  name: string;
+  method: DiscountMethod;
+  value: number;
+  minOrderAmount: number | null;
+  maxDiscountAmount: number | null;
+  startsAt: number | null;
+  endsAt: number | null;
+  combinableWithCoupon: boolean;
+  status: DiscountStatus;
+  shopIds: string[];
+  /** 今の時刻で適用される状態か */
+  state: "RUNNING" | "SCHEDULED" | "ENDED" | "STOPPED";
+  usedCount: number;
+  usedAmount: number;
+}
+
+export interface CouponDto {
+  id: string;
+  code: string;
+  kind: "COMMON" | "ONE_TIME";
+  name: string;
+  method: DiscountMethod;
+  value: number;
+  minOrderAmount: number | null;
+  maxDiscountAmount: number | null;
+  startsAt: number | null;
+  endsAt: number | null;
+  combinableWithAuto: boolean;
+  totalLimit: number | null;
+  perWalletLimit: number | null;
+  usedCount: number;
+  status: DiscountStatus;
+  state: "RUNNING" | "SCHEDULED" | "ENDED" | "STOPPED" | "USED_UP";
+  shopIds: string[];
+  note: string | null;
+  createdAt: number;
 }

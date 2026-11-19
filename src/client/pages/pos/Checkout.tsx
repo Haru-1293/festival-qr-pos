@@ -1,6 +1,6 @@
-import { ArrowLeft, CircleCheck, Minus, Plus, ScanLine, Trash2 } from "lucide-react";
+import { ArrowLeft, CircleCheck, Minus, Plus, ScanLine, Ticket, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PayResult, PaySession, PayStatus, ProductDto, Quote, QuoteLine, SetDto } from "@shared/api";
+import type { PayResult, PaySession, PayStatus, ProductDto, Quote, QuoteDiscount, QuoteLine, SetDto } from "@shared/api";
 import { PinPad } from "@/components/PinPad";
 import { QrScanner, scannerSupported } from "@/components/QrScanner";
 import { ErrorText } from "@/components/Shell";
@@ -47,6 +47,10 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
   const [now, setNow] = useState(Date.now());
   const [pin, setPin] = useState("");
   const [pinTries, setPinTries] = useState(0);
+  // クーポン: 入力欄の文字(codeInput)と、適用ボタンで確定したコード(coupon)。見積もりはサーバーが計算する
+  const [codeInput, setCodeInput] = useState("");
+  const [coupon, setCoupon] = useState("");
+  const [preview, setPreview] = useState<Quote | null>(null);
   const reqId = useRequestId();
   const renewReq = reqId.renew;
 
@@ -55,9 +59,32 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
   const localTotal = rows.reduce((s, r) => s + r.v.unit * r.line.quantity, 0);
   const items = toCartItems(cart);
 
+  const displayTotal = preview && preview.problems.length === 0 ? preview.total : localTotal;
+
   // 読み取りの関数(カメラの再起動を避けるため固定)から、いつでも最新のカートを読めるようにする
-  const latest = useRef({ items, localTotal });
-  latest.current = { items, localTotal };
+  const latest = useRef({ items, localTotal: displayTotal, coupon });
+  latest.current = { items, localTotal: displayTotal, coupon };
+
+  // カートが変わったら、割引・クーポンを含めた見積もりをサーバーに計算してもらう
+  const itemsKey = JSON.stringify(items);
+  useEffect(() => {
+    if (step !== "cart" && step !== "scan") return;
+    if (items.length === 0) {
+      setPreview(null);
+      return;
+    }
+    let alive = true;
+    const t = window.setTimeout(() => {
+      api<Quote>(`/pos/${shopId}/pay/quote`, { body: { items, couponCode: coupon || undefined } })
+        .then((q) => alive && setPreview(q))
+        .catch(() => alive && setPreview(null));
+    }, 250);
+    return () => {
+      alive = false;
+      window.clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemsKey, coupon, shopId, step]);
 
   useEffect(() => {
     if (step !== "confirm" && step !== "pin") return;
@@ -79,7 +106,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
       setError(null);
       setNotice(null);
       try {
-        const s = await api<PaySession>(`/pos/${shopId}/pay/scan`, { body: { token: value.trim(), items: latest.current.items } });
+        const s = await api<PaySession>(`/pos/${shopId}/pay/scan`, { body: { token: value.trim(), items: latest.current.items, couponCode: latest.current.coupon || undefined } });
         setSession(s);
         setQuote(s.quote);
         setToken("");
@@ -91,7 +118,11 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
         setStep(s.card ? "pin" : "confirm");
       } catch (e) {
         if (e instanceof ApiRequestError && e.code === "CART_UNAVAILABLE") showCartProblem(e);
-        else setError(errorMessage(e));
+        else if (e instanceof ApiRequestError && e.code === "COUPON_INVALID") {
+          // QRは消費されていない。クーポンを外すか直してから、もう一度読み取れる
+          setError(`${e.message}(クーポンを外すか、別のコードを入力してください。お客様のQRは使われていません)`);
+          setStep("cart");
+        } else setError(errorMessage(e));
       } finally {
         setBusy(false);
       }
@@ -219,6 +250,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
             {result.lines.map((l, i) => (
               <QuoteLineRow key={`${l.productId}-${i}`} l={l} />
             ))}
+            <DiscountRows subtotal={result.subtotal} discounts={result.discounts} />
             <p className="mt-2 text-xs text-muted-foreground">
               取引番号 {result.orderNo} ・ {formatDateTime(result.paidAt)}
               {result.replayed && "(通信が切れたため、先ほどの結果を表示しています)"}
@@ -291,6 +323,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
             {quote.lines.map((l, i) => (
               <QuoteLineRow key={`${l.productId}-${i}`} l={l} />
             ))}
+            <DiscountRows subtotal={quote.subtotal} discounts={quote.discounts} />
             <p className={cn("mt-2 text-sm font-semibold", short && "text-destructive")}>
               {short ? `残高が ${money(-after)} 足りません` : `支払い後の残高 ${money(after)}`}
             </p>
@@ -319,7 +352,10 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
         <Card>
           <CardContent className="flex flex-col gap-3 pt-4">
             <p className="text-center text-sm text-muted-foreground">合計</p>
-            <p className="text-center text-4xl font-extrabold tracking-tight">{money(localTotal)}</p>
+            <p className="text-center text-4xl font-extrabold tracking-tight">{money(displayTotal)}</p>
+            {coupon && preview && !preview.couponError && preview.discounts.some((d) => d.kind !== "AUTO") && (
+              <p className="text-center text-xs font-semibold text-primary">クーポン {coupon} を使います</p>
+            )}
             <p className="text-center text-sm font-semibold">お客様のQR(スマホ画面またはカード)を読み取ってください</p>
             {scanning ? (
               <QrScanner onScan={(v) => void scan(v)} onClose={() => setScanning(false)} />
@@ -395,10 +431,43 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
       </div>
       {notice && <p role="status" className="rounded-xl bg-secondary px-3 py-2 text-sm font-semibold text-secondary-foreground">{notice}</p>}
       <ErrorText message={error} />
+      {rows.length > 0 && (
+        <Card className="p-3">
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setError(null);
+              setCoupon(codeInput.trim());
+            }}
+          >
+            <div className="relative flex-1">
+              <Ticket className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={codeInput}
+                onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                placeholder="クーポンコード"
+                autoComplete="off"
+                autoCapitalize="characters"
+                className="pl-9 font-mono"
+                maxLength={40}
+              />
+            </div>
+            <Button type="submit" variant="outline" disabled={codeInput.trim() === coupon}>
+              {codeInput.trim() === "" && coupon ? "外す" : "適用"}
+            </Button>
+          </form>
+          {coupon && preview?.couponError && <p className="mt-2 text-sm font-semibold text-destructive">{preview.couponError}</p>}
+          {coupon && preview && !preview.couponError && preview.discounts.some((d) => d.kind !== "AUTO") && (
+            <p className="mt-2 text-sm font-semibold text-primary">クーポンを適用しました</p>
+          )}
+        </Card>
+      )}
       <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 border-t border-border bg-background px-4 py-3">
+        {preview && preview.problems.length === 0 && preview.discounts.length > 0 && <DiscountRows subtotal={preview.subtotal} discounts={preview.discounts} />}
         <div className="flex items-baseline justify-between">
           <span className="text-sm text-muted-foreground">合計</span>
-          <span className="text-3xl font-extrabold tracking-tight">{money(localTotal)}</span>
+          <span className="text-3xl font-extrabold tracking-tight">{money(displayTotal)}</span>
         </div>
         <Button
           size="lg"
@@ -412,6 +481,26 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
           <ScanLine /> お客様のQRを読み取る
         </Button>
       </div>
+    </div>
+  );
+}
+
+/** 小計と、適用された割引(計算順)。割引がなければ何も出さない */
+function DiscountRows({ subtotal, discounts }: { subtotal: number; discounts: QuoteDiscount[] }) {
+  const { money } = useAuth();
+  if (discounts.length === 0) return null;
+  return (
+    <div className="mt-1 flex flex-col gap-0.5 border-t border-dashed border-border pt-1.5 text-sm">
+      <div className="flex justify-between text-muted-foreground">
+        <span>小計</span>
+        <span>{money(subtotal)}</span>
+      </div>
+      {discounts.map((d, i) => (
+        <div key={i} className="flex justify-between font-semibold text-primary">
+          <span className="min-w-0 truncate">{d.kind === "AUTO" ? d.name : `クーポン ${d.name}`}</span>
+          <span className="shrink-0">-{money(d.amount)}</span>
+        </div>
+      ))}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import { cardRoutes } from "./routes/cards";
 import { catalogRoutes } from "./routes/catalog";
 import { setRoutes } from "./routes/sets";
 import { posRoutes } from "./routes/pos";
+import { discountRoutes } from "./routes/discounts";
 import { refundRoutes } from "./routes/refunds";
 import { receptionRoutes } from "./routes/reception";
 import { settingsRoutes } from "./routes/settings";
@@ -39,6 +40,7 @@ const api = new Hono<AppEnv>()
   .route("/catalog", setRoutes)
   .route("/pos", posRoutes)
   .route("/refunds", refundRoutes)
+  .route("/discounts", discountRoutes)
   .get("/health", (c) => c.json({ ok: true, time: Date.now() }));
 
 const app = new Hono<AppEnv>().route("/api", api);

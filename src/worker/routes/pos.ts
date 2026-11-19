@@ -39,7 +39,9 @@ const cartSchema = z
 const setParam = zValidator("param", z.object({ shopId: z.string().length(26), setId: z.string().length(26) }));
 
 /** 見積もりを画面へ返す形にする(確定時の照合用の内部値は含めない) */
-const publicQuote = ({ raw: _raw, needs: _needs, ...q }: CartQuote): Quote => q;
+const publicQuote = ({ raw: _raw, needs: _needs, applied: _applied, ...q }: CartQuote): Quote => q;
+
+const couponSchema = z.string().trim().max(40).optional();
 
 const productParam = zValidator("param", z.object({ shopId: z.string().length(26), productId: z.string().length(26) }));
 
@@ -128,17 +130,28 @@ export const posRoutes = new Hono<AppEnv>()
   })
 
   // ---------- 決済 ----------
+  // 会計前の見積もり(割引・クーポンの確認用)。QRは読み取らない。お客様ごとの利用回数の上限は、読み取り時に確認する
+  .post("/:shopId/pay/quote", shopParam, zValidator("json", z.object({ items: cartSchema, couponCode: couponSchema })), async (c) => {
+    const auth = requireAuth(c);
+    const { shopId } = c.req.valid("param");
+    assertShopAccess(auth, shopId);
+    const { items, couponCode } = c.req.valid("json");
+    c.header("Cache-Control", "no-store");
+    return c.json(publicQuote(await quoteCart(c.env.DB, shopId, items, Date.now(), couponCode || null)));
+  })
+
   // お客様のQRを読み取る。QRはここで消費され、決済セッション(猶予は設定値、既定5分)ができる。
   // カートに買えない商品があるときは、QRを消費する前にエラーにする(お客様のQRを無駄にしない)
   .post(
     "/:shopId/pay/scan",
     shopParam,
-    zValidator("json", z.object({ token: z.string().trim().max(100), items: cartSchema })),
+    zValidator("json", z.object({ token: z.string().trim().max(100), items: cartSchema, couponCode: couponSchema })),
     async (c) => {
       const auth = requireAuth(c);
       const { shopId } = c.req.valid("param");
       assertShopAccess(auth, shopId);
-      const { token, items } = c.req.valid("json");
+      const { token, items, couponCode: rawCoupon } = c.req.valid("json");
+      const couponCode = rawCoupon || null;
       const isCard = CARD_QR_PATTERN.test(token);
       if (!isCard && !WALLET_QR_PATTERN.test(token)) throw badRequest("お客様のQRではありません", "INVALID_QR");
       const db = c.env.DB;
@@ -147,8 +160,15 @@ export const posRoutes = new Hono<AppEnv>()
       if (!shop) throw notFound("店舗が見つかりません");
       if (shop.status !== "ACTIVE") throw forbidden("この店舗は現在会計できません", "SHOP_INACTIVE");
 
-      const quote = await quoteCart(db, shopId, items, now);
+      let quote = await quoteCart(db, shopId, items, now, couponCode);
       if (quote.problems.length > 0) throw conflict(quote.problems[0].message, "CART_UNAVAILABLE", { quote: publicQuote(quote) });
+      /** お客様(ウォレット)が分かった時点で、クーポンを本人の利用回数も含めて確かめ直す。QRを消費する前に断る */
+      const recheck = async (walletId: string) => {
+        if (couponCode) quote = await quoteCart(db, shopId, items, now, couponCode, walletId);
+        if (quote.couponError) throw conflict(quote.couponError, "COUPON_INVALID", { quote: publicQuote(quote) });
+        if (quote.total <= 0) throw badRequest("割引後の合計が0のため、決済は不要です", "ZERO_TOTAL");
+      };
+      if (quote.couponError) throw conflict(quote.couponError, "COUPON_INVALID", { quote: publicQuote(quote) });
       if (quote.total <= 0) throw badRequest("合計が0のため、決済は不要です", "ZERO_TOTAL");
 
       const hash = await sha256Hex(token);
@@ -172,14 +192,15 @@ export const posRoutes = new Hono<AppEnv>()
         if (card.status !== "ACTIVE") throw forbidden("このカードは使えません", "CARD_INACTIVE");
         if (card.expires_at !== null && card.expires_at <= now) throw forbidden("このカードは有効期限が切れています", "CARD_EXPIRED");
         if (card.wstatus !== "ACTIVE") throw forbidden("このカードのウォレットは現在ご利用できません", "WALLET_INACTIVE");
+        await recheck(card.wallet_id!);
         const res = await db.batch([
           db
             .prepare(
-              `INSERT INTO payment_sessions (id, shop_id, clerk_user_id, wallet_id, pay_source, card_id, cart_json, status, created_at, expires_at)
-               SELECT ?, ?, ?, c.wallet_id, 'CARD', c.id, ?, 'OPEN', ?, ? FROM cards c
+              `INSERT INTO payment_sessions (id, shop_id, clerk_user_id, wallet_id, pay_source, card_id, cart_json, coupon_code, status, created_at, expires_at)
+               SELECT ?, ?, ?, c.wallet_id, 'CARD', c.id, ?, ?, 'OPEN', ?, ? FROM cards c
                 WHERE c.qr_token_hash = ? AND ${cardUsableSql("c")}`,
             )
-            .bind(sessionId, shopId, auth.userId, cart, now, expiresAt, hash, now),
+            .bind(sessionId, shopId, auth.userId, cart, couponCode ? quote.applied.find((a) => a.couponCode)?.couponCode ?? null : null, now, expiresAt, hash, now),
         ]);
         if ((res[0].meta.changes ?? 0) !== 1) throw forbidden("このカードは使えません。もう一度読み取ってください", "CARD_INACTIVE");
         await db.batch([
@@ -198,14 +219,15 @@ export const posRoutes = new Hono<AppEnv>()
       // 持ち主のアカウントが停止中なら、QRを消費せずに断る
       const owner = await db
         .prepare(
-          `SELECT w.status AS wstatus, u.status AS ustatus FROM pay_qr_tokens t JOIN wallets w ON w.id = t.wallet_id
+          `SELECT w.id AS wallet_id, w.status AS wstatus, u.status AS ustatus FROM pay_qr_tokens t JOIN wallets w ON w.id = t.wallet_id
              LEFT JOIN users u ON u.id = w.owner_user_id WHERE t.token_hash = ?`,
         )
         .bind(hash)
-        .first<{ wstatus: string; ustatus: string | null }>();
+        .first<{ wallet_id: string; wstatus: string; ustatus: string | null }>();
       if (owner && (owner.wstatus !== "ACTIVE" || (owner.ustatus !== null && owner.ustatus !== "ACTIVE"))) {
         throw forbidden("お客様のご利用が停止されています。受付にお問い合わせください", "WALLET_INACTIVE");
       }
+      if (owner) await recheck(owner.wallet_id);
 
       const res = await db.batch([
         db
@@ -216,11 +238,11 @@ export const posRoutes = new Hono<AppEnv>()
           .bind(now, auth.userId, hash, now),
         db
           .prepare(
-            `INSERT INTO payment_sessions (id, shop_id, clerk_user_id, wallet_id, pay_source, cart_json, status, created_at, expires_at)
-             SELECT ?, ?, ?, t.wallet_id, 'PHONE_QR', ?, 'OPEN', ?, ? FROM pay_qr_tokens t
+            `INSERT INTO payment_sessions (id, shop_id, clerk_user_id, wallet_id, pay_source, cart_json, coupon_code, status, created_at, expires_at)
+             SELECT ?, ?, ?, t.wallet_id, 'PHONE_QR', ?, ?, 'OPEN', ?, ? FROM pay_qr_tokens t
               WHERE t.token_hash = ? AND t.consumed_at = ? AND t.consumed_by_user_id = ?`,
           )
-          .bind(sessionId, shopId, auth.userId, cart, now, expiresAt, hash, now, auth.userId),
+          .bind(sessionId, shopId, auth.userId, cart, quote.applied.find((a) => a.couponCode)?.couponCode ?? null, now, expiresAt, hash, now, auth.userId),
       ]);
       if ((res[1].meta.changes ?? 0) !== 1) {
         const t = await db
@@ -297,9 +319,9 @@ export const posRoutes = new Hono<AppEnv>()
       }
 
       const s = await db
-        .prepare("SELECT wallet_id, card_id, cart_json, status, expires_at, order_id FROM payment_sessions WHERE id = ? AND shop_id = ?")
+        .prepare("SELECT wallet_id, card_id, cart_json, coupon_code, status, expires_at, order_id FROM payment_sessions WHERE id = ? AND shop_id = ?")
         .bind(sessionId, shopId)
-        .first<{ wallet_id: string; card_id: string | null; cart_json: string; status: string; expires_at: number; order_id: string | null }>();
+        .first<{ wallet_id: string; card_id: string | null; cart_json: string; coupon_code: string | null; status: string; expires_at: number; order_id: string | null }>();
       if (!s) throw notFound("決済が見つかりません", "SESSION_NOT_FOUND");
       if (s.status === "COMMITTED") throw conflict("この決済はすでに確定しています", "SESSION_DONE");
       if (s.status === "CANCELLED") throw conflict("この決済は取り消されています。QRを読み取り直してください", "SESSION_CANCELLED");
@@ -328,8 +350,9 @@ export const posRoutes = new Hono<AppEnv>()
       }
 
       // 確定の瞬間の価格・値下げ・在庫で見積もり直す
-      const quote = await quoteCart(db, shopId, JSON.parse(s.cart_json), now);
+      const quote = await quoteCart(db, shopId, JSON.parse(s.cart_json), now, s.coupon_code, s.wallet_id);
       if (quote.problems.length > 0) throw conflict(quote.problems[0].message, "CART_UNAVAILABLE", { quote: publicQuote(quote) });
+      if (quote.couponError) throw conflict(quote.couponError, "COUPON_INVALID", { quote: publicQuote(quote) });
       if (quote.total !== expectedTotal) {
         throw conflict("価格が変わりました。新しい合計を確認してください", "PRICE_CHANGED", { quote: publicQuote(quote) });
       }
@@ -379,6 +402,22 @@ export const posRoutes = new Hono<AppEnv>()
           args: [n.productId, shopId, n.single + n.inSet],
         });
       }
+      // 適用した割引・クーポンが、見積もり時点のまま有効であること(停止・上限到達・設定変更があれば確定しない)
+      for (const a of quote.applied) {
+        guards.push({
+          sql: `EXISTS (SELECT 1 FROM discounts d WHERE d.id = ? AND d.status = 'ACTIVE' AND d.method = ? AND d.value = ?
+                 AND COALESCE(d.max_discount_amount, -1) = ? AND COALESCE(d.min_order_amount, -1) = ?
+                 AND (d.starts_at IS NULL OR d.starts_at <= ?) AND (d.ends_at IS NULL OR d.ends_at > ?))`,
+          args: [a.discountId, a.rule.method, a.rule.value, a.rule.max ?? -1, a.rule.min ?? -1, now, now],
+        });
+        if (a.couponId) {
+          guards.push({
+            sql: `EXISTS (SELECT 1 FROM coupons cp WHERE cp.id = ? AND cp.status = 'ACTIVE' AND (cp.total_limit IS NULL OR cp.used_count < cp.total_limit)
+                   AND (cp.per_wallet_limit IS NULL OR (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.coupon_id = cp.id AND r.wallet_id = ? AND r.status = 'USED') < cp.per_wallet_limit))`,
+            args: [a.couponId, s.wallet_id],
+          });
+        }
+      }
       const chunks: { sql: string[]; args: (string | number)[] }[] = [];
       for (const g of guards) {
         let cur = chunks[chunks.length - 1];
@@ -412,10 +451,10 @@ export const posRoutes = new Hono<AppEnv>()
         db
           .prepare(
             `INSERT INTO orders (id, order_no, shop_id, clerk_user_id, wallet_id, pay_source, subtotal, discount_total, total_paid, status, idempotency_key, paid_at, card_id)
-             SELECT ?, ?, ?, ?, s.wallet_id, s.pay_source, ?, 0, ?, 'PAID', ?, ?, s.card_id FROM payment_sessions s
+             SELECT ?, ?, ?, ?, s.wallet_id, s.pay_source, ?, ?, ?, 'PAID', ?, ?, s.card_id FROM payment_sessions s
               WHERE s.id = ? AND s.status = 'COMMITTED' AND s.order_id IS NULL`,
           )
-          .bind(orderId, orderNo(orderId), shopId, auth.userId, quote.total, quote.total, requestId, now, sessionId),
+          .bind(orderId, orderNo(orderId), shopId, auth.userId, quote.subtotal, quote.discountTotal, quote.total, requestId, now, sessionId),
         // 残高の減算。足りなければ CHECK 制約が全体を巻き戻す
         db
           .prepare(`UPDATE wallets SET balance = balance - ? WHERE id = ? AND ${orderExists}`)
@@ -437,15 +476,15 @@ export const posRoutes = new Hono<AppEnv>()
         stmts.push(
           db
             .prepare(
-              `INSERT INTO order_lines (id, order_id, line_no, kind, product_id, set_id, name_snapshot, unit_price, quantity, surcharge_total, line_subtotal, line_paid,
+              `INSERT INTO order_lines (id, order_id, line_no, kind, product_id, set_id, name_snapshot, unit_price, quantity, surcharge_total, line_subtotal, discount_allocated, line_paid,
                                         list_unit_price, price_cut_id, price_cut_name)
-               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${orderExists}`,
+               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${orderExists}`,
             )
             .bind(
               lineId, orderId, i + 1, l.kind,
               l.kind === "PRODUCT" ? l.productId : null,
               l.kind === "SET" ? l.productId : null,
-              l.name, l.unitPrice, l.quantity, l.surchargeTotal, l.lineTotal, l.lineTotal, l.listUnitPrice,
+              l.name, l.unitPrice, l.quantity, l.surchargeTotal, l.lineTotal, l.discountAllocated, l.lineTotal - l.discountAllocated, l.listUnitPrice,
               discounted ? (quote.cut?.id ?? null) : null,
               discounted ? (quote.cut?.name ?? null) : null,
               orderId,
@@ -460,6 +499,24 @@ export const posRoutes = new Hono<AppEnv>()
                  SELECT ?, ?, ?, ?, ?, ?, ? WHERE ${orderExists}`,
               )
               .bind(newId(now), lineId, r.segmentName, r.productId, r.name, r.count * l.quantity, r.surcharge, orderId),
+          );
+        }
+      });
+      // 適用した割引の記録(計算順)と、クーポンの使用済み記録
+      quote.applied.forEach((a, i) => {
+        stmts.push(
+          db
+            .prepare(
+              `INSERT INTO order_discounts (id, order_id, apply_seq, kind, discount_id, coupon_id, name_snapshot, amount) SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE ${orderExists}`,
+            )
+            .bind(newId(now), orderId, i + 1, a.kind, a.discountId, a.couponId, a.name, a.amount, orderId),
+        );
+        if (a.couponId) {
+          stmts.push(
+            db
+              .prepare(`INSERT INTO coupon_redemptions (id, coupon_id, order_id, wallet_id, amount, status, created_at) SELECT ?, ?, ?, ?, ?, 'USED', ? WHERE ${orderExists}`)
+              .bind(newId(now), a.couponId, orderId, s.wallet_id, a.amount, now, orderId),
+            db.prepare(`UPDATE coupons SET used_count = used_count + 1 WHERE id = ? AND ${orderExists}`).bind(a.couponId, orderId),
           );
         }
       });
@@ -483,7 +540,7 @@ export const posRoutes = new Hono<AppEnv>()
         bumpCatalogStmt(db, shopId),
         auditStmtIfExists(
           db,
-          { actor: auth, action: "payment.commit", targetType: "order", targetId: orderId, after: { sessionId, total: quote.total, walletId: s.wallet_id } },
+          { actor: auth, action: "payment.commit", targetType: "order", targetId: orderId, after: { sessionId, total: quote.total, discountTotal: quote.discountTotal, walletId: s.wallet_id } },
           "SELECT 1 FROM orders WHERE id = ?",
           [orderId],
         ),
@@ -517,7 +574,7 @@ export const posRoutes = new Hono<AppEnv>()
             .first();
           if (!still) throw forbidden("このカードは使えなくなりました。受付にお問い合わせください", "CARD_INACTIVE");
         }
-        const fresh = await quoteCart(db, shopId, JSON.parse(s.cart_json), now2);
+        const fresh = await quoteCart(db, shopId, JSON.parse(s.cart_json), now2, s.coupon_code, s.wallet_id);
         throw conflict("価格や在庫が変わりました。もう一度確認してください", "PRICE_CHANGED", { quote: publicQuote(fresh) });
       }
       return c.json(await loadPayResult(db, orderId));

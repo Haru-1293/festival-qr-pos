@@ -1,6 +1,7 @@
-import type { PayResult, Quote, QuoteLine, QuoteProblem, CartItemInput } from "@shared/api";
+import type { PayResult, Quote, QuoteDiscount, QuoteLine, QuoteProblem, CartItemInput } from "@shared/api";
 import { cutAmount } from "@shared/pricing";
 import { catalogSignature, loadRunningCut, loadVersion } from "./catalog";
+import { computeDiscounts, type AppliedDiscount } from "./discounts";
 
 /** 取引番号(画面表示用)。注文IDの末尾8文字 */
 export const orderNo = (orderId: string): string => orderId.slice(-8);
@@ -21,6 +22,8 @@ export interface RawLine extends QuoteLine {
   discountable: boolean;
   /** セットのとき: 選ばれた内訳 */
   pickRows?: PickRow[];
+  /** この行へ按分された割引(全ユーザー割引・クーポンの合計) */
+  discountAllocated: number;
 }
 
 /** 商品ごとの在庫の必要数(単品販売ぶん/セット内ぶん)。同じ注文の単品とセット内は合算して在庫を確かめる */
@@ -35,6 +38,8 @@ export interface ProductNeed {
 export interface CartQuote extends Quote {
   raw: RawLine[];
   needs: ProductNeed[];
+  /** 確定時の SQL ガードと記録に使う、適用された割引の詳細 */
+  applied: AppliedDiscount[];
 }
 
 interface ProductRow {
@@ -76,7 +81,14 @@ const pickKey = (picks: Record<string, string[]> | undefined) =>
  * 買えない商品・セット(停止・売り切れ・在庫不足・内訳の選び方が不正など)は problems に入れる。
  * セットの価格は「セット価格(値下げ対象なら値下げ後) + 選んだ内訳の追加料金」。追加料金は値下げしない(仮定 A18)。
  */
-export async function quoteCart(db: D1Database, shopId: string, items: CartItemInput[], now: number): Promise<CartQuote> {
+export async function quoteCart(
+  db: D1Database,
+  shopId: string,
+  items: CartItemInput[],
+  now: number,
+  couponCode: string | null = null,
+  walletId: string | null = null,
+): Promise<CartQuote> {
   // 同じ商品・同じ選び方のセットが複数行に分かれていても1行にまとめる
   const merged = new Map<string, CartItemInput & { quantity: number }>();
   for (const i of items) {
@@ -228,6 +240,7 @@ export async function quoteCart(db: D1Database, shopId: string, items: CartItemI
         surchargeTotal: perUnitSurcharge * it.quantity,
         lineTotal: unit * it.quantity + perUnitSurcharge * it.quantity,
         discountable: st.discountable === 1,
+        discountAllocated: 0,
         pickRows,
         components: pickRows.flatMap((r) =>
           Array.from({ length: r.count }, () => ({ segmentName: r.segmentName, productId: r.productId, name: r.name, surcharge: r.surcharge })),
@@ -268,6 +281,7 @@ export async function quoteCart(db: D1Database, shopId: string, items: CartItemI
       surchargeTotal: 0,
       lineTotal: unit * it.quantity,
       discountable: p.discountable === 1,
+      discountAllocated: 0,
     });
   }
 
@@ -280,12 +294,33 @@ export async function quoteCart(db: D1Database, shopId: string, items: CartItemI
       problems.push({ productId: n.productId, name: n.name, code: "INSUFFICIENT_STOCK", message: `${n.name} は残り${p.stock_qty}個です`, available: p.stock_qty });
     }
   }
-  const lines: QuoteLine[] = raw.map(({ discountable: _d, pickRows: _p, ...l }) => l);
+  // 割引(全ユーザー割引 → クーポン)。割引の対象は、割引対象の商品の値下げ後の価格(セットの追加料金は対象外)
+  const subtotal = raw.reduce((a, l) => a + l.lineTotal, 0);
+  const dres =
+    problems.length === 0 || couponCode
+      ? await computeDiscounts(
+          db,
+          shopId,
+          raw.map((l) => ({ base: l.discountable ? l.unitPrice * l.quantity : 0 })),
+          subtotal,
+          now,
+          couponCode,
+          walletId,
+        )
+      : { discounts: [], perLine: raw.map(() => 0), couponError: null };
+  raw.forEach((l, i) => (l.discountAllocated = dres.perLine[i]));
+  const discountTotal = dres.perLine.reduce((a, n) => a + n, 0);
+  const lines: QuoteLine[] = raw.map(({ discountable: _d, pickRows: _p, discountAllocated: _a, ...l }) => l);
   return {
     lines,
     raw,
     needs,
-    total: lines.reduce((s, l) => s + l.lineTotal, 0),
+    applied: dres.discounts,
+    subtotal,
+    discounts: dres.discounts.map(({ kind, discountId, couponId, name, amount }) => ({ kind, discountId, couponId, name, amount })),
+    discountTotal,
+    couponError: dres.couponError,
+    total: subtotal - discountTotal,
     cut: cut ? { id: cut.id, name: cut.name } : null,
     problems,
     signature: catalogSignature(version, cut),
@@ -296,12 +331,12 @@ export async function quoteCart(db: D1Database, shopId: string, items: CartItemI
 export async function loadPayResult(db: D1Database, orderId: string): Promise<PayResult | null> {
   const o = await db
     .prepare(
-      `SELECT o.id, o.total_paid, o.paid_at, l.balance_after FROM orders o LEFT JOIN wallet_ledger l ON l.id = o.ledger_id WHERE o.id = ?`,
+      `SELECT o.id, o.total_paid, o.subtotal, o.paid_at, l.balance_after FROM orders o LEFT JOIN wallet_ledger l ON l.id = o.ledger_id WHERE o.id = ?`,
     )
     .bind(orderId)
-    .first<{ id: string; total_paid: number; paid_at: number; balance_after: number | null }>();
+    .first<{ id: string; total_paid: number; subtotal: number; paid_at: number; balance_after: number | null }>();
   if (!o) return null;
-  const [{ results }, { results: comps }] = await Promise.all([
+  const [{ results }, { results: comps }, { results: discs }] = await Promise.all([
     db
       .prepare(
         `SELECT id, kind, product_id, set_id, name_snapshot, quantity, list_unit_price, unit_price, surcharge_total, line_subtotal
@@ -327,10 +362,16 @@ export async function loadPayResult(db: D1Database, orderId: string): Promise<Pa
       )
       .bind(orderId)
       .all<{ order_line_id: string; segment_name_snapshot: string; product_id: string; name_snapshot: string; quantity: number; surcharge: number }>(),
+    db
+      .prepare(`SELECT kind, discount_id, coupon_id, name_snapshot, amount FROM order_discounts WHERE order_id = ? ORDER BY apply_seq`)
+      .bind(orderId)
+      .all<{ kind: QuoteDiscount["kind"]; discount_id: string | null; coupon_id: string | null; name_snapshot: string; amount: number }>(),
   ]);
   return {
     orderId: o.id,
     orderNo: orderNo(o.id),
+    subtotal: o.subtotal,
+    discounts: discs.map((d) => ({ kind: d.kind, discountId: d.discount_id ?? "", couponId: d.coupon_id, name: d.name_snapshot, amount: d.amount })),
     total: o.total_paid,
     balanceAfter: o.balance_after ?? 0,
     paidAt: o.paid_at,

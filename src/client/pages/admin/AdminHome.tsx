@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Shell } from "@/components/Shell";
 import { cn } from "@/lib/utils";
 import { CardManager } from "./CardManager";
+import { DiscountManager } from "./DiscountManager";
 import { AdminCash } from "./AdminCash";
 import { AdminSettings } from "./AdminSettings";
 import { AdminShops } from "./AdminShops";
@@ -11,6 +12,7 @@ const TABS = [
   { id: "shops", label: "店舗" },
   { id: "users", label: "スタッフ・利用者" },
   { id: "cards", label: "カード" },
+  { id: "discounts", label: "割引" },
   { id: "cash", label: "現金" },
   { id: "settings", label: "設定" },
 ] as const;
@@ -40,6 +42,7 @@ export function AdminHome() {
         {tab === "shops" && <AdminShops />}
         {tab === "users" && <AdminUsers />}
         {tab === "cards" && <CardManager />}
+        {tab === "discounts" && <DiscountManager />}
         {tab === "cash" && <AdminCash />}
         {tab === "settings" && <AdminSettings />}
       </div>
