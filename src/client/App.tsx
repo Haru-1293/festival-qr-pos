@@ -2,11 +2,24 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "@/lib/auth";
 import { LoginPage, ReceptionLoginPage, RegisterPage, SetupPage } from "@/pages/AuthPages";
 import { HomePage } from "@/pages/Home";
+import { useOnline } from "@/lib/useOnline";
+
+/** 端末が回線に届いていないときの表示(ログイン画面を含むすべての画面の上に出る) */
+function OfflineBanner() {
+  const online = useOnline();
+  if (online) return null;
+  return (
+    <div role="status" className="sticky top-0 z-30 bg-amber-400 px-4 py-2 text-center text-sm font-bold text-black">
+      通信できません。画面とカートはそのまま使えますが、決済・チャージは電波が戻るまでできません
+    </div>
+  );
+}
 
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <OfflineBanner />
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/login" element={<LoginPage />} />
