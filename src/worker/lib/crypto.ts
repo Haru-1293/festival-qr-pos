@@ -2,8 +2,18 @@
 
 const enc = new TextEncoder();
 
-// Workers の PBKDF2 は反復回数 100,000 が上限
-export const PBKDF2_ITERATIONS = 100_000;
+// Workers の PBKDF2 は反復回数 100,000 が上限。
+// 無料プランは1リクエストのCPU時間が10msなので、既定は 10,000(約2ms)に抑える。
+// 有料プランなら環境変数 PBKDF2_ITERATIONS で 100000 まで上げられる。保存形式に反復回数を含むので、変えても既存のハッシュは検証できる。
+export const PBKDF2_MAX_ITERATIONS = 100_000;
+export const PBKDF2_DEFAULT_ITERATIONS = 10_000;
+let currentIterations = PBKDF2_DEFAULT_ITERATIONS;
+
+/** 環境変数 PBKDF2_ITERATIONS を反映する(範囲外・不正な値は既定に戻す)。リクエストごとに呼んでよい */
+export function configurePbkdf2(raw: string | undefined): void {
+  const n = Number(raw);
+  currentIterations = Number.isInteger(n) && n >= 1_000 && n <= PBKDF2_MAX_ITERATIONS ? n : PBKDF2_DEFAULT_ITERATIONS;
+}
 
 export function toBase64Url(bytes: Uint8Array): string {
   let s = "";
@@ -60,19 +70,20 @@ async function pbkdf2(secret: Uint8Array | string, salt: Uint8Array, iterations:
 /** 形式: pbkdf2$<iterations>$<salt>$<hash> */
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const hash = await pbkdf2(password, salt, PBKDF2_ITERATIONS);
-  return `pbkdf2$${PBKDF2_ITERATIONS}$${toBase64Url(salt)}$${toBase64Url(hash)}`;
+  const iterations = currentIterations;
+  const hash = await pbkdf2(password, salt, iterations);
+  return `pbkdf2$${iterations}$${toBase64Url(salt)}$${toBase64Url(hash)}`;
 }
 
 export async function verifyPassword(password: string, stored: string | null): Promise<boolean> {
   const parts = (stored ?? "").split("$");
   if (parts.length !== 4 || parts[0] !== "pbkdf2") {
     // ユーザー不在でも同程度の時間を使い、存在有無をタイミングで推測されにくくする
-    await pbkdf2(password, new Uint8Array(16), PBKDF2_ITERATIONS);
+    await pbkdf2(password, new Uint8Array(16), currentIterations);
     return false;
   }
   const iterations = Number(parts[1]);
-  if (!Number.isInteger(iterations) || iterations < 1 || iterations > PBKDF2_ITERATIONS) return false;
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > PBKDF2_MAX_ITERATIONS) return false;
   const actual = await pbkdf2(password, fromBase64Url(parts[2]), iterations);
   return timingSafeEqual(actual, fromBase64Url(parts[3]));
 }
@@ -85,8 +96,9 @@ export async function hashPin(pin: string, pepper: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", enc.encode(pepper), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(pin)));
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const hash = await pbkdf2(mac, salt, PBKDF2_ITERATIONS);
-  return `pin1$${PBKDF2_ITERATIONS}$${toBase64Url(salt)}$${toBase64Url(hash)}`;
+  const iterations = currentIterations;
+  const hash = await pbkdf2(mac, salt, iterations);
+  return `pin1$${iterations}$${toBase64Url(salt)}$${toBase64Url(hash)}`;
 }
 
 export async function verifyPin(pin: string, stored: string | null, pepper: string): Promise<boolean> {
@@ -94,6 +106,8 @@ export async function verifyPin(pin: string, stored: string | null, pepper: stri
   if (parts.length !== 4 || parts[0] !== "pin1") return false;
   const key = await crypto.subtle.importKey("raw", enc.encode(pepper), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(pin)));
-  const actual = await pbkdf2(mac, fromBase64Url(parts[2]), Number(parts[1]));
+  const iterations = Number(parts[1]);
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > PBKDF2_MAX_ITERATIONS) return false;
+  const actual = await pbkdf2(mac, fromBase64Url(parts[2]), iterations);
   return timingSafeEqual(actual, fromBase64Url(parts[3]));
 }

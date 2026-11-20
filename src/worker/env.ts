@@ -6,6 +6,8 @@ export interface Bindings {
   SETUP_TOKEN?: string;
   /** 物理カードPINのハッシュに混ぜる秘密値 */
   PIN_PEPPER?: string;
+  /** PBKDF2 の反復回数(任意。既定 10000。有料プランなら最大 100000) */
+  PBKDF2_ITERATIONS?: string;
 }
 
 export interface AuthContext {

@@ -4,6 +4,7 @@ import { secureHeaders } from "hono/secure-headers";
 import { z } from "zod";
 import type { AppEnv } from "./env";
 import { ApiError } from "./lib/errors";
+import { configurePbkdf2 } from "./lib/crypto";
 import { originCheck, sessionLoader } from "./middleware/auth";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
@@ -27,6 +28,10 @@ z.config(z.locales.ja());
 
 const api = new Hono<AppEnv>()
   .use("*", secureHeaders())
+  .use("*", async (c, next) => {
+    configurePbkdf2(c.env.PBKDF2_ITERATIONS);
+    await next();
+  })
   .use("*", originCheck)
   .use("*", sessionLoader)
   .use("*", emergencyStop)

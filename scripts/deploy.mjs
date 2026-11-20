@@ -5,6 +5,7 @@
 //   D1_DATABASE_ID  任意  D1 の database_id。未設定なら wrangler.jsonc の値をそのまま使う
 //   SETUP_TOKEN     任意  設定されていれば Worker のシークレットとして登録する(未設定なら今の値を変えない)
 //   PIN_PEPPER      任意  同上。32文字以上。後から変えると全カードPINが無効になる
+//   PBKDF2_ITERATIONS 任意  パスワード・PINのハッシュの反復回数(1000〜100000)。未設定なら 10000(無料プラン向け)
 //
 // 使い方(Workers Builds の Deploy command): npm run deploy:builds
 // 確認だけ(何も変更しない): DRY_RUN=1 node scripts/deploy.mjs
@@ -53,7 +54,9 @@ console.log(`✓ シークレット: ${Object.keys(secrets).join("、") || "(ビ
 
 // 3) マイグレーション → デプロイ → シークレット登録
 run(["d1", "migrations", "apply", "DB", "--remote"]);
-run(["deploy"]);
+const iter = env("PBKDF2_ITERATIONS");
+if (iter && !(Number.isInteger(Number(iter)) && Number(iter) >= 1000 && Number(iter) <= 100000)) fail("PBKDF2_ITERATIONS は 1000〜100000 の整数にしてください");
+run(iter ? ["deploy", "--var", `PBKDF2_ITERATIONS:${iter}`] : ["deploy"]);
 if (Object.keys(secrets).length > 0) {
   // 値は標準入力で渡す(コマンドラインやログに出さない)。Worker が作られた後に登録する
   run(["secret", "bulk"], JSON.stringify(secrets));
