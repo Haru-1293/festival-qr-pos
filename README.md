@@ -59,7 +59,7 @@ npm run typecheck
 
 ## 本番へのデプロイ(Workers Builds)
 
-1. D1 を作る:`npx wrangler d1 create festival-qr-pos` を実行し、表示された `database_id` を `wrangler.jsonc` に書く。
+1. D1 は作成済み(`festival-qr-pos`、APAC)で、`database_id` は `wrangler.jsonc` に設定済み。別のアカウントで使う場合だけ `npx wrangler d1 create festival-qr-pos` で作り直し、`database_id` を差し替える。
 2. Cloudflare ダッシュボードの **Workers & Pages → Create → Import a repository** でこのリポジトリを接続する。
    - Build command: `npm run build`
    - Deploy command: `npx wrangler d1 migrations apply DB --remote && npx wrangler deploy`

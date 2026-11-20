@@ -14,8 +14,7 @@
     {
       "binding": "DB",
       "database_name": "festival-qr-pos",
-      // TODO: `wrangler d1 create festival-qr-pos` で作成した ID に置き換える(README 参照)
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "123e9bdb-b097-429a-9275-4193611d694a",
       "migrations_dir": "migrations"
     }
   ]
