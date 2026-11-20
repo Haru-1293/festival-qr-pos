@@ -59,16 +59,19 @@ npm run typecheck
 
 ## 本番へのデプロイ(Workers Builds)
 
-1. D1 は作成済み(`festival-qr-pos`、APAC)で、`database_id` は `wrangler.jsonc` に設定済み。別のアカウントで使う場合だけ `npx wrangler d1 create festival-qr-pos` で作り直し、`database_id` を差し替える。
+1. D1 は作成済み(`festival-qr-pos`、APAC)。`database_id` は `wrangler.jsonc` に入っているが、**ビルド変数 `D1_DATABASE_ID` を設定すればそちらが優先される**(別アカウントで使うときも、ファイルを書き換えずに済む)。
 2. Cloudflare ダッシュボードの **Workers & Pages → Create → Import a repository** でこのリポジトリを接続する。
    - Build command: `npm run build`
-   - Deploy command: `npx wrangler d1 migrations apply DB --remote && npx wrangler deploy`
-3. Worker の **Settings → Variables and Secrets** に次を**シークレット**として登録する。
+   - Deploy command: `npm run deploy:builds`
+3. 接続後の **Settings → Build → Variables and secrets(ビルド変数)** に次を登録する。デプロイのたびに `scripts/deploy.mjs` が読み取り、`database_id` の設定・マイグレーション・デプロイ・シークレット登録までを自動で行う。
 
    | 名前 | 内容 |
    |---|---|
-   | `SETUP_TOKEN` | 最初の全体管理者を作るときだけ使うトークン。作成後は削除してよい |
-   | `PIN_PEPPER` | 物理カードPINのハッシュに混ぜる32文字以上のランダム文字列。**後から変えるとPINが全て無効になる** |
+   | `D1_DATABASE_ID` | D1 の database_id(省略すると `wrangler.jsonc` の値) |
+   | `SETUP_TOKEN` | 最初の全体管理者を作るときだけ使うトークン。作成後は変数を削除してよい(Worker 側のシークレットは残る) |
+   | `PIN_PEPPER` | 物理カードPINのハッシュに混ぜる32文字以上のランダム文字列。**後から変えるとPINが全て無効になる。入れたら変えない** |
+
+   変数を入れなかったシークレットは、Worker にすでにある値を変えない。値はコマンドラインやログに出さない(標準入力で渡す)。確認だけしたいときは `DRY_RUN=1 node scripts/deploy.mjs`。
 4. デプロイ後に `/setup` を開き、全体管理者を作る。
 
 ## セキュリティ上の設計メモ
