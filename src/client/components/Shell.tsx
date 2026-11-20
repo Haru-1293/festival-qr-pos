@@ -28,6 +28,11 @@ export function Shell({ title, children, wide = false }: { title: string; childr
           )}
         </div>
       </header>
+      {settings.emergency.on && (
+        <div role="alert" className="sticky top-14 z-10 bg-destructive px-4 py-2 text-center text-sm font-bold text-destructive-foreground">
+          緊急停止中です{settings.emergency.message ? `:${settings.emergency.message}` : ""}(決済・チャージ・払戻しを止めています)
+        </div>
+      )}
       <main className={`mx-auto w-full flex-1 px-4 py-4 pb-10 ${wide ? "max-w-4xl" : "max-w-md"}`}>{children}</main>
     </div>
   );

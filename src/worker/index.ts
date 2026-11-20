@@ -13,6 +13,8 @@ import { catalogRoutes } from "./routes/catalog";
 import { setRoutes } from "./routes/sets";
 import { posRoutes } from "./routes/pos";
 import { discountRoutes } from "./routes/discounts";
+import { reportRoutes } from "./routes/reports";
+import { emergencyStop } from "./lib/emergency";
 import { refundRoutes } from "./routes/refunds";
 import { receptionRoutes } from "./routes/reception";
 import { settingsRoutes } from "./routes/settings";
@@ -27,6 +29,7 @@ const api = new Hono<AppEnv>()
   .use("*", secureHeaders())
   .use("*", originCheck)
   .use("*", sessionLoader)
+  .use("*", emergencyStop)
   .route("/auth", authRoutes)
   .route("/setup", setupRoutes)
   .route("/settings", settingsRoutes)
@@ -41,6 +44,7 @@ const api = new Hono<AppEnv>()
   .route("/pos", posRoutes)
   .route("/refunds", refundRoutes)
   .route("/discounts", discountRoutes)
+  .route("/reports", reportRoutes)
   .get("/health", (c) => c.json({ ok: true, time: Date.now() }));
 
 const app = new Hono<AppEnv>().route("/api", api);

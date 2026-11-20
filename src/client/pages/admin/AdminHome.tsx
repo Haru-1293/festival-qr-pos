@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Shell } from "@/components/Shell";
 import { cn } from "@/lib/utils";
 import { CardManager } from "./CardManager";
+import { AdminSales } from "./AdminSales";
+import { AuditLog } from "./AuditLog";
 import { AdminRefunds } from "./AdminRefunds";
 import { DiscountManager } from "./DiscountManager";
 import { AdminCash } from "./AdminCash";
@@ -13,9 +15,11 @@ const TABS = [
   { id: "shops", label: "店舗" },
   { id: "users", label: "スタッフ・利用者" },
   { id: "cards", label: "カード" },
+  { id: "sales", label: "売上" },
   { id: "refunds", label: "返金" },
   { id: "discounts", label: "割引" },
   { id: "cash", label: "現金" },
+  { id: "audit", label: "監査ログ" },
   { id: "settings", label: "設定" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -44,9 +48,11 @@ export function AdminHome() {
         {tab === "shops" && <AdminShops />}
         {tab === "users" && <AdminUsers />}
         {tab === "cards" && <CardManager />}
+        {tab === "sales" && <AdminSales />}
         {tab === "refunds" && <AdminRefunds />}
         {tab === "discounts" && <DiscountManager />}
         {tab === "cash" && <AdminCash />}
+        {tab === "audit" && <AuditLog />}
         {tab === "settings" && <AdminSettings />}
       </div>
     </Shell>

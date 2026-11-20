@@ -7,6 +7,7 @@ import { PriceCutManager } from "./PriceCutManager";
 import { ProductManager } from "./ProductManager";
 import { SetManager } from "./SetManager";
 import { RefundManager } from "./RefundManager";
+import { ShopSales } from "./ShopSales";
 import { StaffManager } from "./StaffManager";
 
 const TABS = [
@@ -15,6 +16,7 @@ const TABS = [
   { id: "cut", label: "値下げ" },
   { id: "pos", label: "レジ" },
   { id: "refund", label: "返金" },
+  { id: "sales", label: "売上" },
   { id: "staff", label: "スタッフ" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
@@ -27,7 +29,7 @@ export function ShopManagerHome() {
   return (
     <Shell title={me.user.shopName ?? "店舗"}>
       <div className="flex flex-col gap-4">
-        <div role="tablist" className="grid grid-cols-6 gap-1 rounded-xl bg-accent p-1">
+        <div role="tablist" className="grid grid-cols-7 gap-1 rounded-xl bg-accent p-1">
           {TABS.map((t) => (
             <button
               key={t.id}
@@ -45,6 +47,7 @@ export function ShopManagerHome() {
         {tab === "cut" && <PriceCutManager shopId={shopId} />}
         {tab === "pos" && <PosCatalog shopId={shopId} shopName="レジ画面のプレビュー" embedded />}
         {tab === "refund" && <RefundManager shopId={shopId} />}
+        {tab === "sales" && <ShopSales shopId={shopId} />}
         {tab === "staff" && <StaffManager shopId={shopId} />}
       </div>
     </Shell>

@@ -10,6 +10,51 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 
+/** 緊急停止: お金が動く入口(レジの読み取り・確定、受付のチャージ・払戻し、顧客のQR発行)を止める */
+function EmergencyCard() {
+  const { settings, refresh } = useAuth();
+  const [message, setMessage] = useState(settings.emergency.message);
+  const action = useAction();
+  const on = settings.emergency.on;
+  const set = (next: boolean) => {
+    if (next && !window.confirm("緊急停止すると、すべてのレジの決済と受付のチャージ・払戻しが止まります。よろしいですか?")) return;
+    void action.run(async () => {
+      await api("/admin/settings/emergency", { method: "PUT", body: { on: next, message } });
+      await refresh();
+    });
+  };
+  return (
+    <Card className={on ? "border-destructive md:col-span-2" : "md:col-span-2"}>
+      <CardHeader>
+        <CardTitle>緊急停止</CardTitle>
+        <CardDescription>
+          障害や不正の疑いがあるときに、お金が動く操作だけを止めます。返金・訂正・途中回収・現金の締めと、この管理画面は使えます。いまは{on ? "停止中です" : "通常どおり動いています"}。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <Field label="お知らせ(画面とエラーに表示します。任意)">
+          <Input value={message} onChange={(e) => setMessage(e.target.value)} maxLength={100} placeholder="システム点検のため" />
+        </Field>
+        <ErrorText message={action.error} />
+        {on ? (
+          <div className="flex gap-2">
+            <Button className="flex-1" disabled={action.pending} onClick={() => set(false)}>
+              停止を解除する
+            </Button>
+            <Button variant="outline" disabled={action.pending} onClick={() => set(true)}>
+              お知らせを更新
+            </Button>
+          </div>
+        ) : (
+          <Button variant="destructive" disabled={action.pending} onClick={() => set(true)}>
+            緊急停止する
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function AdminSettings() {
   const { refresh, settings } = useAuth();
   const [c, setC] = useState<CurrencySettings>(settings.currency);
@@ -59,6 +104,7 @@ export function AdminSettings() {
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
+      <EmergencyCard />
       <Card>
         <CardHeader>
           <CardTitle>通貨の表示</CardTitle>

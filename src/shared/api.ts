@@ -549,3 +549,47 @@ export interface CouponDto {
   note: string | null;
   createdAt: number;
 }
+
+// ---------- 売上・精算・監査ログ・緊急停止 ----------
+export interface SalesRow {
+  shopId: string;
+  name: string;
+  orders: number;
+  subtotal: number;
+  discountTotal: number;
+  paidTotal: number;
+  refundedTotal: number;
+  /** 精算対象額 = 支払額 - 返金額 */
+  netSales: number;
+}
+export interface SalesReport {
+  from: number;
+  to: number;
+  shops: SalesRow[];
+  totals: Omit<SalesRow, "shopId" | "name">;
+  discounts: { kind: "AUTO" | "COMMON_COUPON" | "ONE_TIME_COUPON"; name: string; count: number; amount: number }[];
+}
+export interface ProductSalesRow {
+  name: string;
+  kind: "PRODUCT" | "SET";
+  quantity: number;
+  gross: number;
+  discount: number;
+  paid: number;
+}
+export interface AuditEntryDto {
+  id: string;
+  createdAt: number;
+  actorNickname: string | null;
+  actorRole: string | null;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  reason: string | null;
+  before: string | null;
+  after: string | null;
+}
+export interface EmergencyState {
+  on: boolean;
+  message: string;
+}

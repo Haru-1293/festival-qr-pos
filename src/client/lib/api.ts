@@ -54,7 +54,7 @@ export function errorMessage(e: unknown): string {
     if (e.code === "REQUEST_ID_REUSED") {
       return "直前の送信はすでに処理されている可能性があります。「現金」タブの履歴で確認してください";
     }
-    if (e.status >= 500) return "サーバーでエラーが発生しました。結果が不明なときは履歴を確認してから、もう一度お試しください";
+    if (e.status >= 500 && e.code !== "EMERGENCY_STOP") return "サーバーでエラーが発生しました。結果が不明なときは履歴を確認してから、もう一度お試しください";
   }
   return e instanceof Error ? e.message : "エラーが発生しました";
 }

@@ -6,6 +6,7 @@ import { DEFAULT_CURRENCY } from "@shared/currency";
 import { ROLES, SHOP_STATUSES } from "@shared/roles";
 import type { AppEnv } from "../env";
 import { auditStmt } from "../lib/audit";
+import { EMERGENCY_KEY, getEmergency } from "../lib/emergency";
 import { hashPassword } from "../lib/crypto";
 import { badRequest, notFound } from "../lib/errors";
 import { newId } from "../lib/ids";
@@ -322,5 +323,22 @@ export const adminRoutes = new Hono<AppEnv>()
         auditStmt(c.env.DB, { actor: auth, action: "settings.festival_name", targetType: "settings", targetId: SETTING_KEYS.festivalName, after: { name } }),
       ]);
       return c.json({ name });
+    },
+  )
+  // 緊急停止: お金が動く入口(レジの読み取り・確定、受付のチャージ・払戻し、顧客のQR発行)を止める
+  .get("/settings/emergency", async (c) => c.json({ emergency: await getEmergency(c.env.DB) }))
+  .put(
+    "/settings/emergency",
+    zValidator("json", z.object({ on: z.boolean(), message: z.string().trim().max(100).default("") })),
+    async (c) => {
+      const auth = requireAuth(c);
+      const next = c.req.valid("json");
+      const before = await getEmergency(c.env.DB);
+      await c.env.DB.batch([
+        setSettingStmt(c.env.DB, EMERGENCY_KEY, next, auth.userId),
+        auditStmt(c.env.DB, { actor: auth, action: next.on ? "emergency.start" : "emergency.end", targetType: "settings", targetId: EMERGENCY_KEY, before, after: next }),
+      ]);
+      c.header("Cache-Control", "no-store");
+      return c.json({ emergency: next });
     },
   );
