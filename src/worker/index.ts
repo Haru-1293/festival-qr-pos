@@ -32,6 +32,11 @@ const api = new Hono<AppEnv>()
     configurePbkdf2(c.env.PBKDF2_ITERATIONS);
     await next();
   })
+  // 残高・取引・個人情報を含むので、APIの応答はブラウザや中間装置に保存させない
+  .use("*", async (c, next) => {
+    await next();
+    if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
+  })
   .use("*", originCheck)
   .use("*", sessionLoader)
   .use("*", emergencyStop)

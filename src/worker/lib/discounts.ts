@@ -76,7 +76,7 @@ export function allocate(amount: number, remaining: number[]): number[] {
 const RULE_COLS = `d.id, d.name, d.method, d.value, d.min_order_amount, d.max_discount_amount, d.combinable_with_coupon`;
 const inTarget = (shopId: string) =>
   `(NOT EXISTS (SELECT 1 FROM discount_targets t WHERE t.discount_id = d.id AND t.target_type = 'SHOP')
-     OR EXISTS (SELECT 1 FROM discount_targets t WHERE t.discount_id = d.id AND t.target_type = 'SHOP' AND t.target_id = '${shopId.replace(/'/g, "")}'))`;
+     OR EXISTS (SELECT 1 FROM discount_targets t WHERE t.discount_id = d.id AND t.target_type = 'SHOP' AND t.target_id = '${shopId.replace(/[^A-Za-z0-9_-]/g, "")}'))`;
 
 export const normalizeCode = (s: string): string => s.normalize("NFKC").trim().replace(/\s+/g, "").toUpperCase();
 
