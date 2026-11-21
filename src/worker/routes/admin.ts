@@ -8,10 +8,10 @@ import type { AppEnv } from "../env";
 import { auditStmt } from "../lib/audit";
 import { EMERGENCY_KEY, getEmergency } from "../lib/emergency";
 import { hashPassword } from "../lib/crypto";
-import { badRequest, notFound } from "../lib/errors";
+import { badRequest, conflict, notFound } from "../lib/errors";
 import { newId } from "../lib/ids";
 import { SETTING_KEYS, getCurrency, getOperations, setSettingStmt } from "../lib/settings";
-import { buildReceptionQrIssue, createStaffUser, getUserBasic, listUsers } from "../lib/users";
+import { buildReceptionQrIssue, createStaffUser, getUserBasic, isUniqueViolation, listUsers } from "../lib/users";
 import { nicknameSchema, passwordSchema, staffLoginIdSchema } from "../lib/validation";
 import { requireAuth, requireRole } from "../middleware/auth";
 
@@ -173,21 +173,50 @@ export const adminRoutes = new Hono<AppEnv>()
     },
   )
   // 受付担当者の登録。恒久ログインQRを発行する(生トークンはこのレスポンスだけ)
-  .post("/users/reception", zValidator("json", z.object({ nickname: nicknameSchema })), async (c) => {
+  .post("/users/reception", zValidator("json", z.object({ nickname: nicknameSchema, loginId: staffLoginIdSchema.optional(), password: passwordSchema.optional() }).refine((b) => !b.loginId === !b.password, "ログインIDとパスワードは両方入力してください")), async (c) => {
     const auth = requireAuth(c);
-    const { nickname } = c.req.valid("json");
+    const { nickname, loginId, password } = c.req.valid("json");
+    const passwordHash = password ? await hashPassword(password) : null;
     const id = newId();
     const qr = await buildReceptionQrIssue(c.env.DB, auth, id, "新規発行");
     await c.env.DB.batch([
       c.env.DB.prepare(
         `INSERT INTO users (id, role, login_id, password_hash, nickname, status, created_at, created_by)
-         VALUES (?, 'RECEPTION', NULL, NULL, ?, 'ACTIVE', ?, ?)`,
-      ).bind(id, nickname, Date.now(), auth.userId),
+         VALUES (?, 'RECEPTION', ?, ?, ?, 'ACTIVE', ?, ?)`,
+      ).bind(id, loginId ?? null, passwordHash, nickname, Date.now(), auth.userId),
       auditStmt(c.env.DB, { actor: auth, action: "user.create", targetType: "user", targetId: id, after: { role: "RECEPTION", nickname } }),
       ...qr.stmts,
-    ]);
+    ]).catch((e) => {
+      if (isUniqueViolation(e, "users.login_id")) throw conflict("このログインIDはすでに使われています", "LOGIN_ID_TAKEN");
+      throw e;
+    });
     return c.json({ userId: id, token: qr.token } satisfies ReceptionQrIssued, 201);
   })
+  // 受付担当者のID・パスワードの設定/変更(QRとは別のログイン手段)。端末はログアウトされる
+  .post(
+    "/users/:id/reception-credentials",
+    idParam,
+    zValidator("json", z.object({ loginId: staffLoginIdSchema, password: passwordSchema })),
+    async (c) => {
+      const auth = requireAuth(c);
+      const { id } = c.req.valid("param");
+      const b = c.req.valid("json");
+      const target = await getUserBasic(c.env.DB, id);
+      if (!target || target.role !== "RECEPTION") throw notFound("受付担当者が見つかりません");
+      const hash = await hashPassword(b.password);
+      try {
+        await c.env.DB.batch([
+          c.env.DB.prepare("UPDATE users SET login_id = ?, password_hash = ? WHERE id = ?").bind(b.loginId, hash, id),
+          c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(id),
+          auditStmt(c.env.DB, { actor: auth, action: "user.set_credentials", targetType: "user", targetId: id, after: { loginId: b.loginId } }),
+        ]);
+      } catch (e) {
+        if (isUniqueViolation(e, "users.login_id")) throw conflict("このログインIDはすでに使われています", "LOGIN_ID_TAKEN");
+        throw e;
+      }
+      return c.json({ ok: true });
+    },
+  )
   // 受付ログインQRの再発行(紛失時など)。古いQRは即時失効し、その担当者の端末はログアウトされる
   .post(
     "/users/:id/reception-qr",
@@ -237,7 +266,7 @@ export const adminRoutes = new Hono<AppEnv>()
       const { password } = c.req.valid("json");
       const target = await getUserBasic(c.env.DB, id);
       if (!target) throw notFound("ユーザーが見つかりません");
-      if (target.role === "RECEPTION") throw badRequest("受付担当者はパスワードではなくログインQRを使います");
+      if (target.role === "RECEPTION" && !target.login_id) throw badRequest("この受付担当者にはログインIDがありません。先にID・パスワードを設定してください");
       const hash = await hashPassword(password);
       await c.env.DB.batch([
         c.env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?").bind(hash, id),

@@ -15,6 +15,8 @@ import { setRoutes } from "./routes/sets";
 import { posRoutes } from "./routes/pos";
 import { discountRoutes } from "./routes/discounts";
 import { reportRoutes } from "./routes/reports";
+import { orderRoutes } from "./routes/orders";
+import { publicRoutes } from "./routes/public";
 import { emergencyStop } from "./lib/emergency";
 import { refundRoutes } from "./routes/refunds";
 import { receptionRoutes } from "./routes/reception";
@@ -55,6 +57,8 @@ const api = new Hono<AppEnv>()
   .route("/refunds", refundRoutes)
   .route("/discounts", discountRoutes)
   .route("/reports", reportRoutes)
+  .route("/orders", orderRoutes)
+  .route("/public", publicRoutes)
   .get("/health", (c) => c.json({ ok: true, time: Date.now() }));
 
 const app = new Hono<AppEnv>().route("/api", api);

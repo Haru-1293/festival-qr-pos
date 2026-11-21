@@ -336,7 +336,7 @@ export async function loadPayResult(db: D1Database, orderId: string): Promise<Pa
     .bind(orderId)
     .first<{ id: string; total_paid: number; subtotal: number; paid_at: number; balance_after: number | null }>();
   if (!o) return null;
-  const [{ results }, { results: comps }, { results: discs }] = await Promise.all([
+  const [{ results }, { results: comps }, { results: discs }, track] = await Promise.all([
     db
       .prepare(
         `SELECT id, kind, product_id, set_id, name_snapshot, quantity, list_unit_price, unit_price, surcharge_total, line_subtotal
@@ -366,9 +366,11 @@ export async function loadPayResult(db: D1Database, orderId: string): Promise<Pa
       .prepare(`SELECT kind, discount_id, coupon_id, name_snapshot, amount FROM order_discounts WHERE order_id = ? ORDER BY apply_seq`)
       .bind(orderId)
       .all<{ kind: QuoteDiscount["kind"]; discount_id: string | null; coupon_id: string | null; name_snapshot: string; amount: number }>(),
+    db.prepare("SELECT call_no FROM order_tracking WHERE order_id = ?").bind(orderId).first<{ call_no: number }>(),
   ]);
   return {
     orderId: o.id,
+    callNo: track?.call_no ?? null,
     orderNo: orderNo(o.id),
     subtotal: o.subtotal,
     discounts: discs.map((d) => ({ kind: d.kind, discountId: d.discount_id ?? "", couponId: d.coupon_id, name: d.name_snapshot, amount: d.amount })),

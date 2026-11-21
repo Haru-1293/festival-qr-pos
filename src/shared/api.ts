@@ -351,6 +351,8 @@ export interface PayResult {
   total: number;
   balanceAfter: number;
   paidAt: number;
+  /** 呼び出し番号(店舗が注文ステータスのオプションを使っているときだけ) */
+  callNo: number | null;
   lines: QuoteLine[];
   subtotal: number;
   discounts: QuoteDiscount[];
@@ -592,4 +594,49 @@ export interface AuditEntryDto {
 export interface EmergencyState {
   on: boolean;
   message: string;
+}
+
+// ---------- 注文ステータス・呼び出しボード ----------
+export type FulfillmentStatus = "PREPARING" | "READY" | "DONE";
+
+export interface ShopOptions {
+  orderTracking: boolean;
+  callBoard: boolean;
+}
+
+export interface TrackedOrderDto {
+  orderId: string;
+  callNo: number;
+  status: FulfillmentStatus;
+  createdAt: number;
+  updatedAt: number;
+  items: { name: string; quantity: number }[];
+}
+
+export interface CallBoardDto {
+  shopName: string;
+  preparing: number[];
+  ready: number[];
+  serverTime: number;
+}
+
+export interface PublicShopDto {
+  id: string;
+  name: string;
+  callBoard: boolean;
+}
+
+export interface PublicMenuItem {
+  name: string;
+  price: number | null;
+  description: string | null;
+  soldOut: boolean;
+  kind: "PRODUCT" | "SET";
+}
+
+export interface TimeSeriesPoint {
+  /** 区切りの開始時刻(ミリ秒) */
+  t: number;
+  orders: number;
+  netSales: number;
 }

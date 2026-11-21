@@ -122,7 +122,7 @@ export const authRoutes = new Hono<AppEnv>()
       return c.json(await loadMe(db, { userId }), 201);
     },
   )
-  // メールアドレス(ログインID)とパスワードでのログイン。顧客・店員・店舗責任者・全体管理者が使う
+  // ログインID(顧客はメールアドレス)とパスワードでのログイン。全役割が使える。受付担当者は同時1端末のまま
   .post(
     "/login",
     zValidator("json", z.object({ loginId: z.string().trim().min(1).max(200), password: z.string().min(1).max(200) })),
@@ -134,7 +134,7 @@ export const authRoutes = new Hono<AppEnv>()
         .bind(loginId)
         .first<{ id: string; role: Role; password_hash: string | null; status: string }>();
       const ok = await verifyPassword(password, user?.password_hash ?? null);
-      if (!user || !ok || user.status !== "ACTIVE" || user.role === "RECEPTION") {
+      if (!user || !ok || user.status !== "ACTIVE") {
         throw unauthorized("IDまたはパスワードが違います", "INVALID_CREDENTIALS");
       }
       const session = await buildSessionStmts(db, user, deviceLabelFrom(c));

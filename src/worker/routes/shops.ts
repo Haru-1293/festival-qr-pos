@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { auditStmt } from "../lib/audit";
-import type { ReceptionQrIssued } from "@shared/api";
+import type { ReceptionQrIssued, ShopOptions } from "@shared/api";
 import { hashPassword } from "../lib/crypto";
 import { badRequest, conflict, notFound } from "../lib/errors";
 import { buildLoginQrIssue, createStaffUser, getUserBasic, isUniqueViolation, listUsers } from "../lib/users";
@@ -20,6 +20,28 @@ const staffParam = zValidator("param", z.object({ shopId: z.string().length(26),
 export const shopRoutes = new Hono<AppEnv>()
   .use("*", requireRole("SHOP_MANAGER", "ADMIN"))
 
+  // 注文ステータス・呼び出しボードのオプション(店舗ごと)
+  .get("/:shopId/options", shopParam, async (c) => {
+    const auth = requireAuth(c);
+    const { shopId } = c.req.valid("param");
+    assertShopAccess(auth, shopId);
+    const r = await c.env.DB.prepare("SELECT use_order_tracking, use_call_board FROM shops WHERE id = ?").bind(shopId).first<{ use_order_tracking: number; use_call_board: number }>();
+    if (!r) throw notFound("店舗が見つかりません");
+    return c.json({ options: { orderTracking: r.use_order_tracking === 1, callBoard: r.use_call_board === 1 } satisfies ShopOptions });
+  })
+  .put("/:shopId/options", shopParam, zValidator("json", z.object({ orderTracking: z.boolean(), callBoard: z.boolean() })), async (c) => {
+    const auth = requireAuth(c);
+    const { shopId } = c.req.valid("param");
+    assertShopAccess(auth, shopId);
+    const b = c.req.valid("json");
+    if (b.callBoard && !b.orderTracking) throw badRequest("呼び出しボードを使うには、注文ステータスもオンにしてください");
+    const res = await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE shops SET use_order_tracking = ?, use_call_board = ? WHERE id = ?").bind(b.orderTracking ? 1 : 0, b.callBoard ? 1 : 0, shopId),
+      auditStmt(c.env.DB, { actor: auth, action: "shop.options", targetType: "shop", targetId: shopId, after: b }),
+    ]);
+    if ((res[0].meta.changes ?? 0) === 0) throw notFound("店舗が見つかりません");
+    return c.json({ ok: true });
+  })
   .get("/:shopId/staff", shopParam, async (c) => {
     const auth = requireAuth(c);
     const { shopId } = c.req.valid("param");
@@ -29,7 +51,7 @@ export const shopRoutes = new Hono<AppEnv>()
   .post(
     "/:shopId/staff",
     shopParam,
-    zValidator("json", z.object({ loginId: staffLoginIdSchema, password: passwordSchema, nickname: nicknameSchema })),
+    zValidator("json", z.object({ loginId: staffLoginIdSchema, password: passwordSchema, nickname: nicknameSchema, role: z.enum(["CLERK", "SHOP_MANAGER"]).default("CLERK") })),
     async (c) => {
       const auth = requireAuth(c);
       const { shopId } = c.req.valid("param");
@@ -38,7 +60,7 @@ export const shopRoutes = new Hono<AppEnv>()
       if (!shop) throw notFound("店舗が見つかりません");
       const b = c.req.valid("json");
       const id = await createStaffUser(c.env.DB, auth, {
-        role: "CLERK",
+        role: b.role,
         shopId,
         loginId: b.loginId,
         passwordHash: await hashPassword(b.password),

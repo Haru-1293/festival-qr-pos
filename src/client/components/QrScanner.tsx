@@ -1,3 +1,4 @@
+import jsQR from "jsqr";
 import { useEffect, useRef, useState } from "react";
 
 interface BarcodeDetectorLike {
@@ -6,7 +7,7 @@ interface BarcodeDetectorLike {
 type BarcodeDetectorCtor = new (opts: { formats: string[] }) => BarcodeDetectorLike;
 
 export function scannerSupported(): boolean {
-  return typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && "BarcodeDetector" in window;
+  return typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 }
 
 /**
@@ -28,24 +29,44 @@ export function QrScanner({ onScan, onClose }: { onScan: (value: string) => void
         return;
       }
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-      } catch {
-        setError("カメラを使えませんでした。ブラウザのカメラ許可を確認してください");
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+      } catch (e) {
+        const name = (e as { name?: string }).name;
+        setError(
+          name === "NotAllowedError" || name === "SecurityError"
+            ? "カメラの使用が許可されていません。ブラウザのアドレス欄の設定から、このサイトのカメラを「許可」にしてください"
+            : name === "NotFoundError"
+              ? "カメラが見つかりませんでした。QRの文字列を入力してください"
+              : "カメラを使えませんでした。他のアプリがカメラを使っていないか確認してください",
+        );
         return;
       }
       const video = videoRef.current;
       if (!video || stopped) return;
       video.srcObject = stream;
       await video.play().catch(() => undefined);
-      const Detector = (window as unknown as { BarcodeDetector: BarcodeDetectorCtor }).BarcodeDetector;
-      const detector = new Detector({ formats: ["qr_code"] });
+      // 標準の BarcodeDetector があればそれを、なければ同梱の jsQR で読む(iPhone の Safari など)
+      const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorCtor }).BarcodeDetector;
+      const detector = Detector ? new Detector({ formats: ["qr_code"] }) : null;
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
       const tick = async () => {
         if (stopped) return;
         try {
-          const codes = await detector.detect(video);
-          if (codes[0]?.rawValue) {
+          let value: string | undefined;
+          if (detector) {
+            value = (await detector.detect(video))[0]?.rawValue;
+          } else if (ctx && video.videoWidth > 0) {
+            const scale = Math.min(1, 640 / video.videoWidth);
+            canvas.width = Math.round(video.videoWidth * scale);
+            canvas.height = Math.round(video.videoHeight * scale);
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            value = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" })?.data;
+          }
+          if (value) {
             stopped = true;
-            onScan(codes[0].rawValue);
+            onScan(value);
             return;
           }
         } catch {

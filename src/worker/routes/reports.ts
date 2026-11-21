@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { AuditEntryDto, SalesReport } from "@shared/api";
+import type { AuditEntryDto, SalesReport, TimeSeriesPoint } from "@shared/api";
 import type { AppEnv } from "../env";
 import { badRequest } from "../lib/errors";
 import { zv as zValidator } from "../lib/validate";
@@ -78,12 +78,44 @@ async function salesReport(db: D1Database, from: number, to: number): Promise<Sa
   };
 }
 
+const bucketQuery = range.extend({ bucket: z.enum(["hour", "day"]).default("hour") });
+const JST_OFFSET = 9 * 3600_000;
+
+/** 売上の時間帯別・日別の推移(日本時間で区切る)。shopId を省くと全店舗 */
+async function timeSeries(db: D1Database, from: number, to: number, bucket: "hour" | "day", shopId?: string): Promise<TimeSeriesPoint[]> {
+  const size = bucket === "hour" ? 3600_000 : 86_400_000;
+  const { results } = await db
+    .prepare(
+      `SELECT ((o.paid_at + ${JST_OFFSET}) / ${size}) * ${size} - ${JST_OFFSET} AS t, COUNT(*) AS orders, SUM(o.total_paid - o.refunded_total) AS net
+         FROM orders o WHERE ${ORDER_WHERE} ${shopId ? "AND o.shop_id = ?" : ""} GROUP BY t ORDER BY t LIMIT 2000`,
+    )
+    .bind(from, to, ...(shopId ? [shopId] : []))
+    .all<{ t: number; orders: number; net: number }>();
+  return results.map((r) => ({ t: r.t, orders: r.orders, netSales: r.net }));
+}
+
 /** 売上・精算(各店舗の純売上 = 支払額 - 返金額)、監査ログ、CSV */
 export const reportRoutes = new Hono<AppEnv>()
   .get("/sales", requireRole("ADMIN"), zValidator("query", range), async (c) => {
     const [from, to] = bounds(c.req.valid("query"));
     c.header("Cache-Control", "no-store");
     return c.json(await salesReport(c.env.DB, from, to));
+  })
+
+  .get("/timeseries", requireRole("ADMIN"), zValidator("query", bucketQuery), async (c) => {
+    const q = c.req.valid("query");
+    const [from, to] = bounds(q);
+    c.header("Cache-Control", "no-store");
+    return c.json({ points: await timeSeries(c.env.DB, from, to, q.bucket) });
+  })
+
+  .get("/shops/:shopId/timeseries", requireRole("ADMIN", "SHOP_MANAGER"), shopParam, zValidator("query", bucketQuery), async (c) => {
+    const { shopId } = c.req.valid("param");
+    assertShopAccess(requireAuth(c), shopId);
+    const q = c.req.valid("query");
+    const [from, to] = bounds(q);
+    c.header("Cache-Control", "no-store");
+    return c.json({ points: await timeSeries(c.env.DB, from, to, q.bucket, shopId) });
   })
 
   .get("/sales.csv", requireRole("ADMIN"), zValidator("query", range), async (c) => {
