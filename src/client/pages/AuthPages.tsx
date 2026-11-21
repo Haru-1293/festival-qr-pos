@@ -51,7 +51,9 @@ export function LoginPage() {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      const res = await api<MeResponse>("/auth/login", { body: { loginId, password } });
+      const res = await api<MeResponse>("/auth/login", {
+        body: { loginId, password },
+      });
       setMe(res);
     });
   };
@@ -60,23 +62,10 @@ export function LoginPage() {
     <AuthFrame title="ログイン" description="メールアドレス(またはスタッフのログインID)でログインします">
       <form onSubmit={submit} className="flex flex-col gap-4">
         <Field label="メールアドレス / ログインID">
-          <Input
-            value={loginId}
-            onChange={(e) => setLoginId(e.target.value)}
-            autoComplete="username"
-            autoCapitalize="none"
-            inputMode="email"
-            required
-          />
+          <Input value={loginId} onChange={(e) => setLoginId(e.target.value)} autoComplete="username" autoCapitalize="none" inputMode="email" required />
         </Field>
         <Field label="パスワード">
-          <Input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            required
-          />
+          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
         </Field>
         <ErrorText message={error} />
         <Button type="submit" size="lg" disabled={pending}>
@@ -113,7 +102,11 @@ export function RegisterPage() {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      setMe(await api<MeResponse>("/auth/register", { body: { email, password, nickname } }));
+      setMe(
+        await api<MeResponse>("/auth/register", {
+          body: { email, password, nickname },
+        }),
+      );
     });
   };
 
@@ -124,24 +117,10 @@ export function RegisterPage() {
           <Input value={nickname} onChange={(e) => setNickname(e.target.value)} maxLength={20} required />
         </Field>
         <Field label="メールアドレス">
-          <Input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="email"
-            autoCapitalize="none"
-            required
-          />
+          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" autoCapitalize="none" required />
         </Field>
         <Field label="パスワード" hint="8文字以上。忘れた場合は全体管理者が再設定します">
-          <Input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="new-password"
-            minLength={8}
-            required
-          />
+          <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength={8} required />
         </Field>
         <ErrorText message={error} />
         <Button type="submit" size="lg" disabled={pending}>
@@ -166,7 +145,11 @@ export function ReceptionLoginPage() {
   const login = useCallback(
     (value: string) => {
       void run(async () => {
-        setMe(await api<MeResponse>("/auth/qr-login", { body: { token: value.trim() } }));
+        setMe(
+          await api<MeResponse>("/auth/qr-login", {
+            body: { token: value.trim() },
+          }),
+        );
         navigate("/", { replace: true });
       });
     },
@@ -189,9 +172,7 @@ export function ReceptionLoginPage() {
       <Button size="lg" onClick={() => setScanning(true)} disabled={pending || !scannerSupported()}>
         <ScanLine /> QRを読み取る
       </Button>
-      {!scannerSupported() && (
-        <p className="text-xs text-muted-foreground">この端末ではカメラ読み取りに対応していません。下の欄にQRの文字列を入力してください。</p>
-      )}
+      {!scannerSupported() && <p className="text-xs text-muted-foreground">この端末ではカメラ読み取りに対応していません。下の欄にQRの文字列を入力してください。</p>}
       <form
         onSubmit={(e) => {
           e.preventDefault();

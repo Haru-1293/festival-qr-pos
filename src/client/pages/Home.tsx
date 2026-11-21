@@ -51,9 +51,7 @@ function StaffPlaceholder() {
             {ROLE_LABELS[me.user.role]}としてログイン中
             {me.user.shopName && <span className="ml-2 text-sm font-normal text-muted-foreground">{me.user.shopName}</span>}
           </CardTitle>
-          <CardDescription>
-            POS会計の画面は次の更新で追加されます。
-          </CardDescription>
+          <CardDescription>POS会計の画面は次の更新で追加されます。</CardDescription>
         </CardHeader>
       </Card>
     </Shell>

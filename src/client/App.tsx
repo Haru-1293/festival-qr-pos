@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider } from "@/lib/auth";
+import { ConfirmProvider } from "@/lib/confirm";
 import { LoginPage, ReceptionLoginPage, RegisterPage, SetupPage } from "@/pages/AuthPages";
 import { HomePage } from "@/pages/Home";
 import { useOnline } from "@/lib/useOnline";
@@ -18,6 +19,7 @@ function OfflineBanner() {
 export default function App() {
   return (
     <AuthProvider>
+      <ConfirmProvider>
       <BrowserRouter>
         <OfflineBanner />
         <Routes>
@@ -30,6 +32,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
+      </ConfirmProvider>
     </AuthProvider>
   );
 }

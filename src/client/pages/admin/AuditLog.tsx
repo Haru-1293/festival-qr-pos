@@ -100,8 +100,18 @@ export function AuditLog() {
               {open === e.id && (
                 <div className="mt-2 grid gap-2 rounded-lg bg-muted p-2 text-xs sm:grid-cols-2">
                   {e.targetId && <p className="break-all sm:col-span-2">対象ID: {e.targetId}</p>}
-                  {e.before && <pre className="overflow-x-auto whitespace-pre-wrap break-all">変更前{"\n"}{pretty(e.before)}</pre>}
-                  {e.after && <pre className="overflow-x-auto whitespace-pre-wrap break-all">変更後{"\n"}{pretty(e.after)}</pre>}
+                  {e.before && (
+                    <pre className="overflow-x-auto whitespace-pre-wrap break-all">
+                      変更前{"\n"}
+                      {pretty(e.before)}
+                    </pre>
+                  )}
+                  {e.after && (
+                    <pre className="overflow-x-auto whitespace-pre-wrap break-all">
+                      変更後{"\n"}
+                      {pretty(e.after)}
+                    </pre>
+                  )}
                 </div>
               )}
             </div>

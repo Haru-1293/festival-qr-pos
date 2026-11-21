@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 import { useRequestId } from "@/lib/useRequestId";
 import { formatDateTime, signedYen, yen } from "@/lib/utils";
+import { useConfirm } from "@/lib/confirm";
 
 export const KIND_LABEL: Record<CashEventKind, string> = {
   CHARGE: "チャージ受領",
@@ -87,19 +88,27 @@ export function CashPanel({ refreshKey, onChanged }: { refreshKey: number; onCha
 }
 
 function DropForm({ onDone }: { onDone: () => void }) {
+  const confirm = useConfirm();
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [saved, setSaved] = useState<string | null>(null);
   const { pending, error, run } = useAction();
   const reqId = useRequestId();
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     const n = Number(amount);
     if (!Number.isInteger(n) || n <= 0) return;
-    if (!window.confirm(`${yen(n)} を途中回収として記録しますか?`)) return;
+    if (
+      !(await confirm(`${yen(n)} を途中回収として記録しますか?`, {
+        destructive: true,
+      }))
+    )
+      return;
     void run(async () => {
-      await api("/reception/cash/drop", { body: { requestId: reqId.get(), amount: n, note: note || undefined } });
+      await api("/reception/cash/drop", {
+        body: { requestId: reqId.get(), amount: n, note: note || undefined },
+      });
       reqId.renew();
       setSaved(`${yen(n)} を記録しました`);
       setAmount("");
@@ -136,6 +145,7 @@ function DropForm({ onDone }: { onDone: () => void }) {
 }
 
 function CloseForm({ summary, onDone }: { summary: ReceptionSummary; onDone: () => void }) {
+  const confirm = useConfirm();
   const [counted, setCounted] = useState("");
   const [note, setNote] = useState("");
   const [result, setResult] = useState<ClosingDto | null>(null);
@@ -152,16 +162,18 @@ function CloseForm({ summary, onDone }: { summary: ReceptionSummary; onDone: () 
     );
   }
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     const hasCount = counted !== "";
-    const msg = hasCount
-      ? `数えた現金 ${yen(Number(counted))} で締めます。締めた記録は変更できません。よろしいですか?`
-      : "数えた現金の入力なしで締めます。締めた記録は変更できません。よろしいですか?";
-    if (!window.confirm(msg)) return;
+    const msg = hasCount ? `数えた現金 ${yen(Number(counted))} で締めます。締めた記録は変更できません。よろしいですか?` : "数えた現金の入力なしで締めます。締めた記録は変更できません。よろしいですか?";
+    if (!(await confirm(msg, { destructive: true }))) return;
     void run(async () => {
       const r = await api<{ closing: ClosingDto }>("/cash/closings", {
-        body: { target: "SELF", countedAmount: hasCount ? Number(counted) : null, note: note || undefined },
+        body: {
+          target: "SELF",
+          countedAmount: hasCount ? Number(counted) : null,
+          note: note || undefined,
+        },
       });
       setResult(r.closing);
       setCounted("");
@@ -198,11 +210,7 @@ function CloseForm({ summary, onDone }: { summary: ReceptionSummary; onDone: () 
             <p className="font-bold">締めました({formatDateTime(result.closedAt)})</p>
             <p>期待額 {yen(result.expectedAmount)}</p>
             {result.countedAmount !== null && <p>数えた額 {yen(result.countedAmount)}</p>}
-            {result.difference !== null && (
-              <p className={result.difference === 0 ? "" : "font-bold text-destructive"}>
-                差異 {result.difference === 0 ? "なし" : signedYen(result.difference)}
-              </p>
-            )}
+            {result.difference !== null && <p className={result.difference === 0 ? "" : "font-bold text-destructive"}>差異 {result.difference === 0 ? "なし" : signedYen(result.difference)}</p>}
           </div>
         )}
       </CardContent>
@@ -211,6 +219,7 @@ function CloseForm({ summary, onDone }: { summary: ReceptionSummary; onDone: () 
 }
 
 function EventRow({ e, money, onDone }: { e: CashEventDto; money: (n: number) => string; onDone: () => void }) {
+  const confirm = useConfirm();
   const [editing, setEditing] = useState(false);
   const [newCash, setNewCash] = useState("");
   const [reason, setReason] = useState("");
@@ -219,13 +228,15 @@ function EventRow({ e, money, onDone }: { e: CashEventDto; money: (n: number) =>
   const canCorrect = e.kind === "CHARGE" && e.ledgerId !== null;
   const corrected = e.kind === "CHARGE" && e.effectiveCash !== null && e.effectiveCash !== e.amount;
 
-  const submit = (ev: FormEvent) => {
+  const submit = async (ev: FormEvent) => {
     ev.preventDefault();
     const n = Number(newCash);
     if (!Number.isInteger(n) || n < 0 || !e.ledgerId) return;
-    if (!window.confirm(`受領額を ${yen(n)} に訂正します(残高も同じだけ増減します)。よろしいですか?`)) return;
+    if (!(await confirm(`受領額を ${yen(n)} に訂正します(残高も同じだけ増減します)。よろしいですか?`, { destructive: true }))) return;
     void run(async () => {
-      await api(`/reception/charge/${e.ledgerId}/correct`, { body: { requestId: reqId.get(), newCashAmount: n, reason } });
+      await api(`/reception/charge/${e.ledgerId}/correct`, {
+        body: { requestId: reqId.get(), newCashAmount: n, reason },
+      });
       reqId.renew();
       setEditing(false);
       setNewCash("");
@@ -262,7 +273,9 @@ function EventRow({ e, money, onDone }: { e: CashEventDto; money: (n: number) =>
       )}
       {editing && (
         <form onSubmit={submit} className="flex flex-col gap-2 rounded-lg bg-muted p-3">
-          <p className="text-xs text-muted-foreground">現在の受領額 {yen(e.effectiveCash ?? e.amount)}(チャージ {money(e.effectiveCash ?? e.amount)})</p>
+          <p className="text-xs text-muted-foreground">
+            現在の受領額 {yen(e.effectiveCash ?? e.amount)}(チャージ {money(e.effectiveCash ?? e.amount)})
+          </p>
           <Field label="正しい受領額(円)">
             <Input inputMode="numeric" pattern="[0-9]*" value={newCash} onChange={(ev) => setNewCash(onlyDigits(ev.target.value))} required />
           </Field>

@@ -13,6 +13,8 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 import { cn, formatDateTime } from "@/lib/utils";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const DAY = 24 * 60 * 60 * 1000;
 const toDateInput = (ms: number) => {
@@ -28,7 +30,13 @@ const randomPin = () => {
 };
 const digits4 = (s: string) => s.replace(/[^0-9]/g, "").slice(0, 4);
 
-const STATUS_LABEL: Record<CardStatus, string> = { ISSUED: "未有効化", ACTIVE: "有効", SUSPENDED: "一時停止", EXPIRED: "期限切れ", DELETED: "削除済み" };
+const STATUS_LABEL: Record<CardStatus, string> = {
+  ISSUED: "未有効化",
+  ACTIVE: "有効",
+  SUSPENDED: "一時停止",
+  EXPIRED: "期限切れ",
+  DELETED: "削除済み",
+};
 const STATUS_VARIANT: Record<CardStatus, "default" | "muted" | "warning" | "destructive"> = {
   ISSUED: "muted",
   ACTIVE: "default",
@@ -49,19 +57,15 @@ export function CardManager() {
   ];
   return (
     <div className="flex flex-col gap-4">
-      <div role="tablist" className="flex gap-1 rounded-xl bg-muted p-1">
-        {SUBS.map((t) => (
-          <button
-            key={t.id}
-            role="tab"
-            aria-selected={sub === t.id}
-            onClick={() => setSub(t.id)}
-            className={cn("h-9 flex-1 rounded-lg text-sm font-semibold", sub === t.id ? "bg-card shadow-sm" : "text-muted-foreground")}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <Tabs value={sub} onValueChange={(v) => setSub(v as Sub)}>
+        <TabsList aria-label="カードの管理">
+          {SUBS.map((t) => (
+            <TabsTrigger key={t.id} value={t.id} className="h-9">
+              {t.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
       {sub === "list" && <CardList />}
       {sub === "issue" && <IssueCards />}
       {sub === "activate" && <ActivateCard onDone={() => setSub("list")} />}
@@ -81,7 +85,14 @@ function IssueCards() {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void act.run(async () => {
-      const r = await api<{ cards: IssuedCard[] }>("/cards/issue", { body: { count: Number(count), batch: batch.trim() || undefined, memo: memo.trim() || undefined, expiresAt: endOfDay(expiry) } });
+      const r = await api<{ cards: IssuedCard[] }>("/cards/issue", {
+        body: {
+          count: Number(count),
+          batch: batch.trim() || undefined,
+          memo: memo.trim() || undefined,
+          expiresAt: endOfDay(expiry),
+        },
+      });
       setIssued(r.cards);
     });
   };
@@ -131,7 +142,9 @@ function PrintSheet({ cards, title, onClose }: { cards: IssuedCard[]; title: str
     <div className="sheet-host fixed inset-0 z-50 overflow-auto bg-background p-4" role="dialog" aria-label={title}>
       <div className="mx-auto max-w-3xl">
         <div className="mb-3 flex flex-col gap-2 print:hidden">
-          <p className="text-lg font-bold">{title}({cards.length}枚)</p>
+          <p className="text-lg font-bold">
+            {title}({cards.length}枚)
+          </p>
           <p className="rounded-lg bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900">
             このQRは今だけ表示できます。印刷または保存してから閉じてください(閉じたあとは同じQRを表示できません。未有効化のカードなら、QRを作り直せます)。
           </p>
@@ -176,7 +189,9 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
   const scan = (value: string) => {
     setScanning(false);
     void look.run(async () => {
-      const r = await api<{ card: CardDto }>("/cards/scan", { body: { token: value.trim() } });
+      const r = await api<{ card: CardDto }>("/cards/scan", {
+        body: { token: value.trim() },
+      });
       setCard(r.card);
       setExpiry(toDateInput(r.card.expiresAt ?? Date.now() + 180 * DAY));
       setToken("");
@@ -188,7 +203,14 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
     if (!card) return;
     if (pin !== pin2) return void act.run(async () => Promise.reject(new Error("PINと確認入力が一致しません")));
     void act.run(async () => {
-      const r = await api<{ card: CardDto }>(`/cards/${card.id}/activate`, { body: { nickname: nickname.trim(), pin, memo: memo.trim() || undefined, expiresAt: endOfDay(expiry) } });
+      const r = await api<{ card: CardDto }>(`/cards/${card.id}/activate`, {
+        body: {
+          nickname: nickname.trim(),
+          pin,
+          memo: memo.trim() || undefined,
+          expiresAt: endOfDay(expiry),
+        },
+      });
       setDone({ card: r.card, pin });
     });
   };
@@ -207,7 +229,10 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
       <Card>
         <CardHeader>
           <CardTitle>有効化しました</CardTitle>
-          <CardDescription>カード {done.card.displayNo}(実物のカード番号と一致していることを確認してください)</CardDescription>
+          <CardDescription>
+            カード {done.card.displayNo}
+            (実物のカード番号と一致していることを確認してください)
+          </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           <div className="rounded-xl bg-secondary p-4 text-center">
@@ -215,7 +240,9 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
             <p className="mt-1 text-xs text-muted-foreground">PIN(この画面を閉じると表示できません)</p>
             <p className="font-mono text-4xl font-extrabold tracking-[0.4em]">{done.pin}</p>
           </div>
-          <p className="text-sm text-muted-foreground">PINは本人にだけ伝えてください。残高は0です。チャージは受付でこのカードのQRを読み取って行います。有効期限 {formatDateTime(done.card.expiresAt ?? 0)}</p>
+          <p className="text-sm text-muted-foreground">
+            PINは本人にだけ伝えてください。残高は0です。チャージは受付でこのカードのQRを読み取って行います。有効期限 {formatDateTime(done.card.expiresAt ?? 0)}
+          </p>
           <div className="flex gap-2">
             <Button className="flex-1" onClick={reset}>
               <QrCode /> 次のカードを有効化
@@ -277,7 +304,10 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
       <CardContent>
         {blocked ? (
           <div className="flex flex-col gap-3">
-            <p className="text-sm font-medium text-amber-800">このカードは「{STATUS_LABEL[card.status]}」のため、有効化できません。</p>
+            <p className="text-sm font-medium text-amber-800">
+              このカードは「{STATUS_LABEL[card.status]}
+              」のため、有効化できません。
+            </p>
             <Button variant="outline" onClick={reset}>
               別のカードを読み取る
             </Button>
@@ -403,7 +433,10 @@ function CardRow({ card: c, open, onToggle, onChanged }: { card: CardDto; open: 
   const act = useAction();
 
   useEffect(() => {
-    if (mode === "delete") void api<{ cards: CardDto[] }>("/cards?status=ISSUED").then((r) => setStock(r.cards.filter((x) => x.id !== c.id))).catch(() => undefined);
+    if (mode === "delete")
+      void api<{ cards: CardDto[] }>("/cards?status=ISSUED")
+        .then((r) => setStock(r.cards.filter((x) => x.id !== c.id)))
+        .catch(() => undefined);
   }, [mode, c.id]);
 
   const close = () => {
@@ -508,7 +541,16 @@ function CardRow({ card: c, open, onToggle, onChanged }: { card: CardDto; open: 
           {mode === "suspend" && (
             <Panel title="一時停止(紛失の報告など)" onCancel={close}>
               <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="理由(必須)" maxLength={200} aria-label="停止の理由" />
-              <Button disabled={act.pending || !reason.trim()} onClick={() => run(() => api(`/cards/${c.id}/suspend`, { body: { reason: reason.trim() } }))}>
+              <Button
+                disabled={act.pending || !reason.trim()}
+                onClick={() =>
+                  run(() =>
+                    api(`/cards/${c.id}/suspend`, {
+                      body: { reason: reason.trim() },
+                    }),
+                  )
+                }
+              >
                 一時停止する
               </Button>
             </Panel>
@@ -516,7 +558,16 @@ function CardRow({ card: c, open, onToggle, onChanged }: { card: CardDto; open: 
           {mode === "resume" && (
             <Panel title="停止を解除" onCancel={close}>
               <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="理由(必須。例: 見つかった)" maxLength={200} aria-label="解除の理由" />
-              <Button disabled={act.pending || !reason.trim()} onClick={() => run(() => api(`/cards/${c.id}/resume`, { body: { reason: reason.trim() } }))}>
+              <Button
+                disabled={act.pending || !reason.trim()}
+                onClick={() =>
+                  run(() =>
+                    api(`/cards/${c.id}/resume`, {
+                      body: { reason: reason.trim() },
+                    }),
+                  )
+                }
+              >
                 解除する
               </Button>
             </Panel>
@@ -529,7 +580,12 @@ function CardRow({ card: c, open, onToggle, onChanged }: { card: CardDto; open: 
                   自動で決める
                 </Button>
               </div>
-              {pin.length === 4 && <p className="text-xs text-muted-foreground">新しいPIN: <b className="font-mono text-base">{pin}</b>(本人に伝えてください)</p>}
+              {pin.length === 4 && (
+                <p className="text-xs text-muted-foreground">
+                  新しいPIN: <b className="font-mono text-base">{pin}</b>
+                  (本人に伝えてください)
+                </p>
+              )}
               <Button disabled={act.pending || pin.length !== 4} onClick={() => run(() => api(`/cards/${c.id}/reset-pin`, { body: { pin } }))}>
                 再設定する
               </Button>
@@ -573,22 +629,39 @@ function CardRow({ card: c, open, onToggle, onChanged }: { card: CardDto; open: 
               )}
               {walletAction === "TRANSFER" && (
                 <div className="flex flex-col gap-2">
-                  <select className="h-11 rounded-lg border border-input bg-card px-3 text-sm" value={newCardId} onChange={(e) => setNewCardId(e.target.value)} aria-label="引き継ぎ先のカード">
-                    <option value="">引き継ぎ先の未有効化カードを選ぶ…</option>
-                    {stock.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.displayNo}
-                        {s.issueBatch ? `(${s.issueBatch})` : ""}
-                      </option>
-                    ))}
-                  </select>
+                  <Select value={newCardId} onValueChange={(v) => setNewCardId(v)}>
+                    <SelectTrigger className="h-11 text-sm" aria-label="引き継ぎ先のカード">
+                      <SelectValue placeholder="引き継ぎ先の未有効化カードを選ぶ…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {stock.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.displayNo}
+                          {s.issueBatch ? `(${s.issueBatch})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <div className="flex gap-2">
-                    <Input inputMode="numeric" value={pin} onChange={(e) => setPin(digits4(e.target.value))} placeholder="新カードの4桁PIN" maxLength={4} autoComplete="off" aria-label="新カードのPIN" />
+                    <Input
+                      inputMode="numeric"
+                      value={pin}
+                      onChange={(e) => setPin(digits4(e.target.value))}
+                      placeholder="新カードの4桁PIN"
+                      maxLength={4}
+                      autoComplete="off"
+                      aria-label="新カードのPIN"
+                    />
                     <Button type="button" variant="outline" onClick={() => setPin(randomPin())}>
                       自動で決める
                     </Button>
                   </div>
-                  {pin.length === 4 && <p className="text-xs text-muted-foreground">新カードのPIN: <b className="font-mono text-base">{pin}</b>(本人に伝えてください)</p>}
+                  {pin.length === 4 && (
+                    <p className="text-xs text-muted-foreground">
+                      新カードのPIN: <b className="font-mono text-base">{pin}</b>
+                      (本人に伝えてください)
+                    </p>
+                  )}
                 </div>
               )}
               <Button
@@ -597,7 +670,11 @@ function CardRow({ card: c, open, onToggle, onChanged }: { card: CardDto; open: 
                 onClick={() =>
                   run(() =>
                     api(`/cards/${c.id}/delete`, {
-                      body: { reason: reason.trim(), walletAction: c.walletStatus === null ? "KEEP" : walletAction, ...(walletAction === "TRANSFER" ? { newCardId, newPin: pin } : {}) },
+                      body: {
+                        reason: reason.trim(),
+                        walletAction: c.walletStatus === null ? "KEEP" : walletAction,
+                        ...(walletAction === "TRANSFER" ? { newCardId, newPin: pin } : {}),
+                      },
                     }),
                   )
                 }

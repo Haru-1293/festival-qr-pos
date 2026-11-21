@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { Shell } from "@/components/Shell";
-import { cn } from "@/lib/utils";
 import { CashPanel } from "./CashPanel";
 import { ChargePanel } from "./ChargePanel";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const TABS = [
   { id: "desk", label: "チャージ・払い戻し" },
@@ -17,19 +17,15 @@ export function ReceptionHome() {
   return (
     <Shell title="受付">
       <div className="flex flex-col gap-4">
-        <div role="tablist" className="grid grid-cols-2 gap-1 rounded-xl bg-accent p-1">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              role="tab"
-              aria-selected={tab === t.id}
-              onClick={() => setTab(t.id)}
-              className={cn("h-11 rounded-lg text-sm font-semibold", tab === t.id ? "bg-card shadow-sm" : "text-muted-foreground")}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as TabId)}>
+          <TabsList aria-label="受付メニュー" className="grid grid-cols-2">
+            {TABS.map((t) => (
+              <TabsTrigger key={t.id} value={t.id} className="h-11">
+                {t.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
         <div className={tab === "desk" ? "" : "hidden"}>
           <ChargePanel onChanged={() => setRefreshKey((k) => k + 1)} />
         </div>

@@ -3,6 +3,7 @@ import type { ShopDto } from "@shared/api";
 import { Field } from "@/components/Shell";
 import { api } from "@/lib/api";
 import { RefundManager } from "../shop/RefundManager";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /** 全体管理者の返金。店舗を選んで、店舗責任者と同じ画面で返金する(任意金額の返金は全体管理者だけ) */
 export function AdminRefunds() {
@@ -20,13 +21,18 @@ export function AdminRefunds() {
   return (
     <div className="flex flex-col gap-4">
       <Field label="店舗">
-        <select className="h-12 rounded-lg border border-input bg-card px-3 text-base" value={shopId} onChange={(e) => setShopId(e.target.value)}>
-          {shops.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.displayName}
-            </option>
-          ))}
-        </select>
+        <Select value={shopId} onValueChange={(v) => setShopId(v)}>
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {shops.map((s) => (
+              <SelectItem key={s.id} value={s.id}>
+                {s.displayName}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </Field>
       {shopId && <RefundManager key={shopId} shopId={shopId} />}
     </div>

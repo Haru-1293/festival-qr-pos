@@ -8,10 +8,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useAction } from "@/lib/useAction";
+import { useConfirm } from "@/lib/confirm";
 
-const STATUS_LABEL: Record<ShopDto["status"], string> = { ACTIVE: "営業中", SUSPENDED: "停止中", CLOSED: "終了" };
+const STATUS_LABEL: Record<ShopDto["status"], string> = {
+  ACTIVE: "営業中",
+  SUSPENDED: "停止中",
+  CLOSED: "終了",
+};
 
 export function AdminShops() {
+  const confirm = useConfirm();
   const [shops, setShops] = useState<ShopDto[]>([]);
   const [name, setName] = useState("");
   const create = useAction();
@@ -33,8 +39,8 @@ export function AdminShops() {
     });
   };
 
-  const setStatus = (s: ShopDto, status: ShopDto["status"]) => {
-    if (status !== "ACTIVE" && !window.confirm(`${s.displayName} を「${STATUS_LABEL[status]}」にしますか?`)) return;
+  const setStatus = async (s: ShopDto, status: ShopDto["status"]) => {
+    if (status !== "ACTIVE" && !(await confirm(`${s.displayName} を「${STATUS_LABEL[status]}」にしますか?`, { destructive: true }))) return;
     void row.run(async () => {
       await api(`/admin/shops/${s.id}`, { method: "PATCH", body: { status } });
       await load();
@@ -77,12 +83,7 @@ export function AdminShops() {
                   {STATUS_LABEL[s.status]}
                 </Badge>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={row.pending}
-                onClick={() => setStatus(s, s.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE")}
-              >
+              <Button size="sm" variant="outline" disabled={row.pending} onClick={() => setStatus(s, s.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE")}>
                 {s.status === "ACTIVE" ? "停止" : "再開"}
               </Button>
             </div>

@@ -14,6 +14,7 @@ import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 import { useRequestId } from "@/lib/useRequestId";
 import { cn, yen } from "@/lib/utils";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type Mode = "charge" | "payout";
 type Done = { kind: Mode; data: CashOpResult; nickname: string | null };
@@ -62,7 +63,9 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
   const doLookup = useCallback(
     (value: string) => {
       void look.run(async () => {
-        const res = await api<LookupResponse>("/reception/lookup", { body: { token: value.trim() } });
+        const res = await api<LookupResponse>("/reception/lookup", {
+          body: { token: value.trim() },
+        });
         setPin("");
         setPinTries(0);
         setLookup(res);
@@ -113,9 +116,20 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
       try {
         const data =
           mode === "charge"
-            ? await api<CashOpResult>("/reception/charge", { body: { lookupId: lookup.lookupId, requestId: reqId.get(), cashAmount: cashNum } })
+            ? await api<CashOpResult>("/reception/charge", {
+                body: {
+                  lookupId: lookup.lookupId,
+                  requestId: reqId.get(),
+                  cashAmount: cashNum,
+                },
+              })
             : await api<CashOpResult>("/reception/payout", {
-                body: { lookupId: lookup.lookupId, requestId: reqId.get(), expectedBalance: lookup.wallet.balance, ...(lookup.card ? { pin } : {}) },
+                body: {
+                  lookupId: lookup.lookupId,
+                  requestId: reqId.get(),
+                  expectedBalance: lookup.wallet.balance,
+                  ...(lookup.card ? { pin } : {}),
+                },
               });
         setDone({ kind: mode, data, nickname: lookup.wallet.nickname });
         setPin("");
@@ -241,23 +255,21 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
       ) : (
         <Card>
           <CardContent className="flex flex-col gap-4 pt-4">
-            <div role="tablist" className="grid grid-cols-2 gap-1 rounded-xl bg-accent p-1">
-              {(["charge", "payout"] as const).map((m) => (
-                <button
-                  key={m}
-                  role="tab"
-                  aria-selected={mode === m}
-                  disabled={confirming || op.pending}
-                  onClick={() => {
-                    setMode(m);
-                    setLocalError(null);
-                  }}
-                  className={cn("h-11 rounded-lg text-sm font-semibold", mode === m ? "bg-card shadow-sm" : "text-muted-foreground")}
-                >
-                  {m === "charge" ? "チャージ" : "払い戻し"}
-                </button>
-              ))}
-            </div>
+            <Tabs
+              value={mode}
+              onValueChange={(v) => {
+                setMode(v as "charge" | "payout");
+                setLocalError(null);
+              }}
+            >
+              <TabsList aria-label="操作" className="grid grid-cols-2">
+                {(["charge", "payout"] as const).map((m) => (
+                  <TabsTrigger key={m} value={m} className="h-11" disabled={confirming || op.pending}>
+                    {m === "charge" ? "チャージ" : "払い戻し"}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
 
             {mode === "charge" ? (
               <>
@@ -314,17 +326,19 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
                   やめる
                 </Button>
                 <Button className="flex-1" size="lg" onClick={goConfirm} disabled={mode === "payout" && w.balance <= 0}>
-                  {mode === "charge" ? "内容を確認する" : <><HandCoins /> 内容を確認する</>}
+                  {mode === "charge" ? (
+                    "内容を確認する"
+                  ) : (
+                    <>
+                      <HandCoins /> 内容を確認する
+                    </>
+                  )}
                 </Button>
               </div>
             ) : (
               <div className="flex flex-col gap-3 rounded-xl border-2 border-primary p-3">
-                <p className="text-base font-bold">
-                  {mode === "charge" ? `${yen(cashNum)} を受け取りましたか?` : `${payoutCash === null ? "" : yen(payoutCash)} をお渡しします`}
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {mode === "charge" ? `${money(units ?? 0)} をチャージします。` : "確定すると残高が0になります。確定後に現金をお渡しください。"}
-                </p>
+                <p className="text-base font-bold">{mode === "charge" ? `${yen(cashNum)} を受け取りましたか?` : `${payoutCash === null ? "" : yen(payoutCash)} をお渡しします`}</p>
+                <p className="text-sm text-muted-foreground">{mode === "charge" ? `${money(units ?? 0)} をチャージします。` : "確定すると残高が0になります。確定後に現金をお渡しください。"}</p>
                 {mode === "payout" && lookup.card && (
                   <div className="flex flex-col gap-2 rounded-lg bg-muted p-3">
                     <p className="text-center text-sm font-semibold">現金をお渡しするため、カードのPIN(4桁)を入力してもらってください</p>

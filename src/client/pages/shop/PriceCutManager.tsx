@@ -12,8 +12,15 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 import { formatDateTime } from "@/lib/utils";
+import { useConfirm } from "@/lib/confirm";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const STATE_LABEL: Record<PriceCutState, string> = { RUNNING: "実施中", SCHEDULED: "開始前", ENDED: "終了", STOPPED: "停止済み" };
+const STATE_LABEL: Record<PriceCutState, string> = {
+  RUNNING: "実施中",
+  SCHEDULED: "開始前",
+  ENDED: "終了",
+  STOPPED: "停止済み",
+};
 const digits = (s: string) => s.replace(/[^0-9]/g, "");
 
 /** `datetime-local` の値(端末の現地時刻)をミリ秒へ。空なら null */
@@ -25,6 +32,7 @@ function toMs(v: string): number | null {
 
 /** 店舗責任者による「定価の一律値下げ」(タイムセールなど)。設定するとレジ画面へすぐ反映される */
 export function PriceCutManager({ shopId }: { shopId: string }) {
+  const confirm = useConfirm();
   const { money } = useAuth();
   const [cuts, setCuts] = useState<PriceCutDto[]>([]);
   const [name, setName] = useState("タイムセール");
@@ -49,15 +57,23 @@ export function PriceCutManager({ shopId }: { shopId: string }) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     void create.run(async () => {
-      await api(`/catalog/${shopId}/price-cuts`, { body: { name, method, value: v, startsAt: toMs(startsAt), endsAt: toMs(endsAt) } });
+      await api(`/catalog/${shopId}/price-cuts`, {
+        body: {
+          name,
+          method,
+          value: v,
+          startsAt: toMs(startsAt),
+          endsAt: toMs(endsAt),
+        },
+      });
       setStartsAt("");
       setEndsAt("");
       await load();
     });
   };
 
-  const stopCut = (c: PriceCutDto) => {
-    if (!window.confirm(`「${c.name}」を止めますか?\n価格はすぐに元へ戻ります。`)) return;
+  const stopCut = async (c: PriceCutDto) => {
+    if (!(await confirm(`「${c.name}」を止めますか?\n価格はすぐに元へ戻ります。`, { destructive: true }))) return;
     void stop.run(async () => {
       await api(`/catalog/${shopId}/price-cuts/${c.id}/stop`, { body: {} });
       await load();
@@ -65,8 +81,7 @@ export function PriceCutManager({ shopId }: { shopId: string }) {
   };
 
   const desc = (c: PriceCutDto) => (c.method === "PERCENT" ? `${c.value}%引き` : `${money(c.value)}引き`);
-  const period = (c: PriceCutDto) =>
-    `${c.startsAt ? formatDateTime(c.startsAt) : "設定した時点"} 〜 ${c.endsAt ? formatDateTime(c.endsAt) : "手動で止めるまで"}`;
+  const period = (c: PriceCutDto) => `${c.startsAt ? formatDateTime(c.startsAt) : "設定した時点"} 〜 ${c.endsAt ? formatDateTime(c.endsAt) : "手動で止めるまで"}`;
 
   return (
     <div className="flex flex-col gap-4">
@@ -100,10 +115,15 @@ export function PriceCutManager({ shopId }: { shopId: string }) {
                 <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} required />
               </Field>
               <Field label="下げ方">
-                <select className="h-12 rounded-lg border border-input bg-card px-3 text-base" value={method} onChange={(e) => setMethod(e.target.value as PriceCutMethod)}>
-                  <option value="PERCENT">割合(○%引き)</option>
-                  <option value="FIXED">金額(1点につき○引き)</option>
-                </select>
+                <Select value={method} onValueChange={(v) => setMethod(v as PriceCutMethod)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PERCENT">割合(○%引き)</SelectItem>
+                    <SelectItem value="FIXED">金額(1点につき○引き)</SelectItem>
+                  </SelectContent>
+                </Select>
               </Field>
               <Field label={method === "PERCENT" ? "割合(%)" : "1点あたりの値下げ額"} hint={`例: 150の商品は ${money(150 - example)} になります`}>
                 <Input inputMode="numeric" value={value} onChange={(e) => setValue(digits(e.target.value))} required className="h-12 text-lg font-bold" />

@@ -8,8 +8,14 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useAction } from "@/lib/useAction";
 import { formatDateTime, signedYen, yen } from "@/lib/utils";
+import { useConfirm } from "@/lib/confirm";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const MODE_LABEL = { DAY: "日次(全受付をまとめて管理者が締める)", SHIFT: "担当者交代ごと(受付が自分で締める)", MANUAL: "手動(管理者が必要なときに締める)" } as const;
+const MODE_LABEL = {
+  DAY: "日次(全受付をまとめて管理者が締める)",
+  SHIFT: "担当者交代ごと(受付が自分で締める)",
+  MANUAL: "手動(管理者が必要なときに締める)",
+} as const;
 
 function TotalsGrid({ t }: { t: CashTotals }) {
   return (
@@ -28,6 +34,7 @@ function TotalsGrid({ t }: { t: CashTotals }) {
 
 /** 全体管理者: 受付の現金(未締め)の集計と、締め */
 export function AdminCash() {
+  const confirm = useConfirm();
   const [summary, setSummary] = useState<AdminCashSummary | null>(null);
   const [closings, setClosings] = useState<ClosingDto[]>([]);
   const [target, setTarget] = useState("ALL");
@@ -47,11 +54,11 @@ export function AdminCash() {
 
   const selected = target === "ALL" ? summary?.total : summary?.users.find((u) => u.userId === target)?.totals;
 
-  const submit = (e: FormEvent) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     const hasCount = counted !== "";
     const label = target === "ALL" ? "全受付" : (summary?.users.find((u) => u.userId === target)?.nickname ?? "");
-    if (!window.confirm(`${label}の現金を締めます。締めた記録は変更できません。よろしいですか?`)) return;
+    if (!(await confirm(`${label}の現金を締めます。締めた記録は変更できません。よろしいですか?`, { destructive: true }))) return;
     void run(async () => {
       const r = await api<{ closing: ClosingDto }>("/cash/closings", {
         body: {
@@ -111,14 +118,19 @@ export function AdminCash() {
           <CardContent>
             <form onSubmit={submit} className="flex flex-col gap-3">
               <Field label="対象">
-                <select className="h-12 rounded-lg border border-input bg-card px-3 text-base" value={target} onChange={(e) => setTarget(e.target.value)}>
-                  <option value="ALL">全受付をまとめて</option>
-                  {summary.users.map((u) => (
-                    <option key={u.userId} value={u.userId}>
-                      {u.nickname}だけ
-                    </option>
-                  ))}
-                </select>
+                <Select value={target} onValueChange={(v) => setTarget(v)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">全受付をまとめて</SelectItem>
+                    {summary.users.map((u) => (
+                      <SelectItem key={u.userId} value={u.userId}>
+                        {u.nickname}だけ
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
               <p className="rounded-lg bg-muted px-3 py-2 text-sm">
                 あるはずの現金 <b>{yen(selected?.expected ?? 0)}</b>({selected?.eventCount ?? 0}件)
@@ -139,9 +151,7 @@ export function AdminCash() {
                 <p className="font-bold">締めました({formatDateTime(result.closedAt)})</p>
                 <p>期待額 {yen(result.expectedAmount)}</p>
                 {result.countedAmount !== null && <p>数えた額 {yen(result.countedAmount)}</p>}
-                {result.difference !== null && (
-                  <p className={result.difference === 0 ? "" : "font-bold text-destructive"}>差異 {result.difference === 0 ? "なし" : signedYen(result.difference)}</p>
-                )}
+                {result.difference !== null && <p className={result.difference === 0 ? "" : "font-bold text-destructive"}>差異 {result.difference === 0 ? "なし" : signedYen(result.difference)}</p>}
               </div>
             )}
           </CardContent>

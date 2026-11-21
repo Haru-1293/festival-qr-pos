@@ -11,9 +11,15 @@ import { ApiRequestError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 import { useRequestId } from "@/lib/useRequestId";
-import { cn, formatDateTime } from "@/lib/utils";
+import { formatDateTime } from "@/lib/utils";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
 
-const STATUS_LABEL: Record<OrderStatus, string> = { PAID: "支払い済み", PARTIALLY_REFUNDED: "一部返金済み", REFUNDED: "全額返金済み" };
+const STATUS_LABEL: Record<OrderStatus, string> = {
+  PAID: "支払い済み",
+  PARTIALLY_REFUNDED: "一部返金済み",
+  REFUNDED: "全額返金済み",
+};
 const REASONS = ["お客様都合", "商品の不備", "入力ミス", "提供できなかった"];
 type Mode = "PARTIAL" | "FULL" | "ARBITRARY";
 
@@ -103,7 +109,13 @@ export function RefundManager({ shopId }: { shopId: string }) {
               </div>
               <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>{o.customerNickname ?? "お客様"}</span>
-                {o.status === "PAID" ? <span>{STATUS_LABEL.PAID}</span> : <Badge variant="warning">{STATUS_LABEL[o.status]}(返金 {money(o.refundedTotal)})</Badge>}
+                {o.status === "PAID" ? (
+                  <span>{STATUS_LABEL.PAID}</span>
+                ) : (
+                  <Badge variant="warning">
+                    {STATUS_LABEL[o.status]}(返金 {money(o.refundedTotal)})
+                  </Badge>
+                )}
               </div>
             </Card>
           </button>
@@ -116,11 +128,18 @@ export function RefundManager({ shopId }: { shopId: string }) {
   if (!detail) return <p className="p-6 text-center text-sm text-muted-foreground">{op.error ?? "読み込み中…"}</p>;
 
   const picks = detail.lines
-    .map((l) => ({ l, n: qty[l.id] ?? 0, left: l.quantity - l.refundedQuantity }))
+    .map((l) => ({
+      l,
+      n: qty[l.id] ?? 0,
+      left: l.quantity - l.refundedQuantity,
+    }))
     .filter((x) => x.n > 0)
-    .map((x) => ({ ...x, amount: refundAmountForLine(x.l, x.n), restore: restore[x.l.id] ?? true }));
-  const amount =
-    mode === "FULL" ? detail.total : mode === "ARBITRARY" ? Number(arbitrary || 0) : picks.reduce((s, p) => s + p.amount, 0);
+    .map((x) => ({
+      ...x,
+      amount: refundAmountForLine(x.l, x.n),
+      restore: restore[x.l.id] ?? true,
+    }));
+  const amount = mode === "FULL" ? detail.total : mode === "ARBITRARY" ? Number(arbitrary || 0) : picks.reduce((s, p) => s + p.amount, 0);
   const valid = amount > 0 && amount <= detail.refundable && reason.trim().length > 0 && (mode !== "PARTIAL" || picks.length > 0);
 
   const submit = () => {
@@ -131,7 +150,15 @@ export function RefundManager({ shopId }: { shopId: string }) {
           kind: mode,
           reason: reason.trim(),
           expectedAmount: amount,
-          ...(mode === "PARTIAL" ? { lines: picks.map((p) => ({ orderLineId: p.l.id, quantity: p.n, restoreStock: p.restore })) } : {}),
+          ...(mode === "PARTIAL"
+            ? {
+                lines: picks.map((p) => ({
+                  orderLineId: p.l.id,
+                  quantity: p.n,
+                  restoreStock: p.restore,
+                })),
+              }
+            : {}),
           ...(mode === "FULL" ? { restoreStock: restoreAll, restoreCoupon } : {}),
           ...(mode === "ARBITRARY" ? { amount } : {}),
         };
@@ -195,23 +222,21 @@ export function RefundManager({ shopId }: { shopId: string }) {
 
       {detail.refundable > 0 ? (
         <>
-          <div role="tablist" className={cn("grid gap-1 rounded-xl bg-accent p-1", isAdmin ? "grid-cols-3" : "grid-cols-2")}>
-            {([["PARTIAL", "商品を選ぶ"], ["FULL", "全額"], ...(isAdmin ? [["ARBITRARY", "任意金額"]] : [])] as [Mode, string][]).map(([m, label]) => (
-              <button
-                key={m}
-                role="tab"
-                aria-selected={mode === m}
-                disabled={m === "FULL" && detail.refundedTotal > 0}
-                onClick={() => {
-                  setMode(m);
-                  setConfirming(false);
-                }}
-                className={cn("h-10 rounded-lg text-sm font-semibold disabled:opacity-40", mode === m ? "bg-card shadow-sm" : "text-muted-foreground")}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <Tabs
+            value={mode}
+            onValueChange={(v) => {
+              setMode(v as Mode);
+              setConfirming(false);
+            }}
+          >
+            <TabsList aria-label="返金のしかた" className={isAdmin ? "grid grid-cols-3" : "grid grid-cols-2"}>
+              {([["PARTIAL", "商品を選ぶ"], ["FULL", "全額"], ...(isAdmin ? [["ARBITRARY", "任意金額"]] : [])] as [Mode, string][]).map(([m, label]) => (
+                <TabsTrigger key={m} value={m} disabled={m === "FULL" && detail.refundedTotal > 0} className="disabled:opacity-40">
+                  {label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
 
           {mode === "PARTIAL" && (
             <Card>
@@ -247,7 +272,16 @@ export function RefundManager({ shopId }: { shopId: string }) {
                       </div>
                       {n > 0 && (
                         <label className="flex items-center gap-2 text-xs">
-                          <input type="checkbox" className="size-4" checked={restore[l.id] ?? true} onChange={(e) => setRestore({ ...restore, [l.id]: e.target.checked })} />
+                          <Checkbox
+                            className="size-4"
+                            checked={restore[l.id] ?? true}
+                            onCheckedChange={(c) =>
+                              setRestore({
+                                ...restore,
+                                [l.id]: c === true,
+                              })
+                            }
+                          />
                           在庫に戻す(返金 {money(refundAmountForLine(l, n))})
                         </label>
                       )}
@@ -259,13 +293,13 @@ export function RefundManager({ shopId }: { shopId: string }) {
           )}
           {mode === "FULL" && (
             <label className="flex items-center gap-2 rounded-xl bg-card px-3 py-3 text-sm font-medium">
-              <input type="checkbox" className="size-5" checked={restoreAll} onChange={(e) => setRestoreAll(e.target.checked)} />
+              <Checkbox checked={restoreAll} onCheckedChange={(c) => setRestoreAll(c === true)} />
               すべての商品を在庫に戻す
             </label>
           )}
           {mode === "FULL" && detail.couponUsed && (
             <label className="flex items-center gap-2 rounded-xl bg-card px-3 py-3 text-sm font-medium">
-              <input type="checkbox" className="size-5" checked={restoreCoupon} onChange={(e) => setRestoreCoupon(e.target.checked)} />
+              <Checkbox checked={restoreCoupon} onCheckedChange={(c) => setRestoreCoupon(c === true)} />
               使ったクーポンを、もう一度使える状態に戻す
             </label>
           )}
@@ -292,7 +326,9 @@ export function RefundManager({ shopId }: { shopId: string }) {
                 <CardTitle>この内容で返金します</CardTitle>
               </CardHeader>
               <CardContent className="flex flex-col gap-1 text-sm">
-                <p>元の取引 {detail.orderNo}(支払い {money(detail.total)})</p>
+                <p>
+                  元の取引 {detail.orderNo}(支払い {money(detail.total)})
+                </p>
                 <p>これまでの返金 {money(detail.refundedTotal)}</p>
                 {mode === "PARTIAL" &&
                   picks.map((p) => (
@@ -303,8 +339,12 @@ export function RefundManager({ shopId }: { shopId: string }) {
                 {mode === "FULL" && <p>・全商品{restoreAll ? "(在庫に戻す)" : "(在庫は戻さない)"}</p>}
                 {mode === "FULL" && detail.couponUsed && <p>・クーポン{restoreCoupon ? "は戻す" : "は使用済みのまま"}</p>}
                 <p className="text-lg font-extrabold">今回の返金 {money(amount)}</p>
-                <p>返金後の累計 {money(detail.refundedTotal + amount)} / 残り {money(detail.refundable - amount)}</p>
-                <p className="text-muted-foreground">理由: {reason} ・ 操作者: {me?.user.nickname}</p>
+                <p>
+                  返金後の累計 {money(detail.refundedTotal + amount)} / 残り {money(detail.refundable - amount)}
+                </p>
+                <p className="text-muted-foreground">
+                  理由: {reason} ・ 操作者: {me?.user.nickname}
+                </p>
                 <ErrorText message={op.error} />
                 <div className="mt-2 flex gap-2">
                   <Button variant="outline" className="flex-1" onClick={() => setConfirming(false)} disabled={op.pending}>

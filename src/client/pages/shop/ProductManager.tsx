@@ -11,8 +11,15 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 import { cn } from "@/lib/utils";
+import { useConfirm } from "@/lib/confirm";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 
-const MODE_LABEL: Record<SaleMode, string> = { BOTH: "単品・セット両方", SINGLE_ONLY: "単品のみ", SET_ONLY: "セット限定(非売品)" };
+const MODE_LABEL: Record<SaleMode, string> = {
+  BOTH: "単品・セット両方",
+  SINGLE_ONLY: "単品のみ",
+  SET_ONLY: "セット限定(非売品)",
+};
 
 interface Draft {
   id: string | null;
@@ -26,11 +33,23 @@ interface Draft {
   trackStock: boolean;
   stockQty: string;
 }
-const EMPTY: Draft = { id: null, name: "", price: "", description: "", saleMode: "BOTH", discountable: true, sortOrder: "0", tagIds: [], trackStock: false, stockQty: "" };
+const EMPTY: Draft = {
+  id: null,
+  name: "",
+  price: "",
+  description: "",
+  saleMode: "BOTH",
+  discountable: true,
+  sortOrder: "0",
+  tagIds: [],
+  trackStock: false,
+  stockQty: "",
+};
 const digits = (s: string) => s.replace(/[^0-9]/g, "");
 
 /** 店舗責任者の商品管理。登録・編集・タグ・在庫・アーカイブ。変更はレジ画面へすぐ反映される */
 export function ProductManager({ shopId }: { shopId: string }) {
+  const confirm = useConfirm();
   const { money } = useAuth();
   const [products, setProducts] = useState<ProductDto[]>([]);
   const [tags, setTags] = useState<TagDto[]>([]);
@@ -43,10 +62,7 @@ export function ProductManager({ shopId }: { shopId: string }) {
   const tagAction = useAction();
 
   const load = useCallback(async () => {
-    const [p, t] = await Promise.all([
-      api<{ products: ProductDto[]; cut: PriceCutDto | null }>(`/catalog/${shopId}/products`),
-      api<{ tags: TagDto[] }>(`/catalog/${shopId}/tags`),
-    ]);
+    const [p, t] = await Promise.all([api<{ products: ProductDto[]; cut: PriceCutDto | null }>(`/catalog/${shopId}/products`), api<{ tags: TagDto[] }>(`/catalog/${shopId}/tags`)]);
     setProducts(p.products);
     setCut(p.cut);
     setTags(t.tags);
@@ -83,10 +99,17 @@ export function ProductManager({ shopId }: { shopId: string }) {
         tagIds: draft.tagIds,
       };
       if (draft.id) {
-        await api(`/catalog/${shopId}/products/${draft.id}`, { method: "PATCH", body: base });
+        await api(`/catalog/${shopId}/products/${draft.id}`, {
+          method: "PATCH",
+          body: base,
+        });
       } else {
         await api(`/catalog/${shopId}/products`, {
-          body: { ...base, trackStock: draft.trackStock, stockQty: draft.trackStock ? Number(draft.stockQty || 0) : null },
+          body: {
+            ...base,
+            trackStock: draft.trackStock,
+            stockQty: draft.trackStock ? Number(draft.stockQty || 0) : null,
+          },
         });
       }
       setDraft(null);
@@ -102,16 +125,24 @@ export function ProductManager({ shopId }: { shopId: string }) {
     const note = window.prompt("理由(任意。例: 追加で仕込んだ / 落とした)") ?? undefined;
     void row.run(async () => {
       await api(`/catalog/${shopId}/products/${p.id}/stock`, {
-        body: { delta, reason: delta > 0 ? "RESTOCK" : "DISCARD", expectedQty: p.stockQty, note: note || undefined },
+        body: {
+          delta,
+          reason: delta > 0 ? "RESTOCK" : "DISCARD",
+          expectedQty: p.stockQty,
+          note: note || undefined,
+        },
       });
       await load();
     });
   };
 
-  const setStatus = (p: ProductDto, status: "ACTIVE" | "STOPPED" | "ARCHIVED") => {
-    if (status === "ARCHIVED" && !window.confirm(`${p.name} をアーカイブしますか?\n販売の一覧から外れます(過去の売上の記録は残ります)。`)) return;
+  const setStatus = async (p: ProductDto, status: "ACTIVE" | "STOPPED" | "ARCHIVED") => {
+    if (status === "ARCHIVED" && !(await confirm(`${p.name} をアーカイブしますか?\n販売の一覧から外れます(過去の売上の記録は残ります)。`, { destructive: true }))) return;
     void row.run(async () => {
-      await api(`/catalog/${shopId}/products/${p.id}`, { method: "PATCH", body: { status } });
+      await api(`/catalog/${shopId}/products/${p.id}`, {
+        method: "PATCH",
+        body: { status },
+      });
       await load();
     });
   };
@@ -141,20 +172,27 @@ export function ProductManager({ shopId }: { shopId: string }) {
                 <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} maxLength={60} required />
               </Field>
               <Field label="販売形態">
-                <select
-                  className="h-12 rounded-lg border border-input bg-card px-3 text-base"
-                  value={draft.saleMode}
-                  onChange={(e) => setDraft({ ...draft, saleMode: e.target.value as SaleMode })}
-                >
-                  {Object.entries(MODE_LABEL).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
+                <Select value={draft.saleMode} onValueChange={(v) => setDraft({ ...draft, saleMode: v as SaleMode })}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(MODE_LABEL).map(([k, v]) => (
+                      <SelectItem key={k} value={k}>
+                        {v}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
               <Field label="定価" hint={draft.saleMode === "SET_ONLY" ? "セット限定は空欄でもかまいません" : undefined}>
-                <Input inputMode="numeric" value={draft.price} onChange={(e) => setDraft({ ...draft, price: digits(e.target.value) })} required={draft.saleMode !== "SET_ONLY"} className="h-12 text-lg font-bold" />
+                <Input
+                  inputMode="numeric"
+                  value={draft.price}
+                  onChange={(e) => setDraft({ ...draft, price: digits(e.target.value) })}
+                  required={draft.saleMode !== "SET_ONLY"}
+                  className="h-12 text-lg font-bold"
+                />
               </Field>
               <Field label="説明(任意)">
                 <Input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} maxLength={300} />
@@ -170,7 +208,12 @@ export function ProductManager({ shopId }: { shopId: string }) {
                           <button
                             type="button"
                             key={t.id}
-                            onClick={() => setDraft({ ...draft, tagIds: on ? draft.tagIds.filter((x) => x !== t.id) : [...draft.tagIds, t.id] })}
+                            onClick={() =>
+                              setDraft({
+                                ...draft,
+                                tagIds: on ? draft.tagIds.filter((x) => x !== t.id) : [...draft.tagIds, t.id],
+                              })
+                            }
                             className={cn("h-9 rounded-full px-4 text-sm font-semibold", on ? "bg-primary text-primary-foreground" : "bg-accent")}
                           >
                             {t.name}
@@ -183,18 +226,29 @@ export function ProductManager({ shopId }: { shopId: string }) {
               {!draft.id && (
                 <>
                   <label className="flex items-center gap-2 text-sm font-medium">
-                    <input type="checkbox" className="size-5" checked={draft.trackStock} onChange={(e) => setDraft({ ...draft, trackStock: e.target.checked })} />
+                    <Checkbox checked={draft.trackStock} onCheckedChange={(c) => setDraft({ ...draft, trackStock: c === true })} />
                     数量を管理する(売れた数だけ残数が減り、0で自動的に売り切れ)
                   </label>
                   {draft.trackStock && (
                     <Field label="準備数量">
-                      <Input inputMode="numeric" value={draft.stockQty} onChange={(e) => setDraft({ ...draft, stockQty: digits(e.target.value) })} required className="h-12 text-lg font-bold" />
+                      <Input
+                        inputMode="numeric"
+                        value={draft.stockQty}
+                        onChange={(e) =>
+                          setDraft({
+                            ...draft,
+                            stockQty: digits(e.target.value),
+                          })
+                        }
+                        required
+                        className="h-12 text-lg font-bold"
+                      />
                     </Field>
                   )}
                 </>
               )}
               <label className="flex items-center gap-2 text-sm font-medium">
-                <input type="checkbox" className="size-5" checked={draft.discountable} onChange={(e) => setDraft({ ...draft, discountable: e.target.checked })} />
+                <Checkbox checked={draft.discountable} onCheckedChange={(c) => setDraft({ ...draft, discountable: c === true })} />
                 割引・値下げの対象にする
               </label>
               <Field label="表示順(小さいほど上)">
@@ -247,7 +301,7 @@ export function ProductManager({ shopId }: { shopId: string }) {
         <CardHeader>
           <CardTitle>商品一覧</CardTitle>
           <label className="flex items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} /> アーカイブ済みも表示
+            <Checkbox checked={showArchived} onCheckedChange={(c) => setShowArchived(c === true)} /> アーカイブ済みも表示
           </label>
         </CardHeader>
         <CardContent className="flex flex-col divide-y divide-border">

@@ -10,7 +10,11 @@ import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { ShopSales } from "../shop/ShopSales";
 
-const KIND: Record<string, string> = { AUTO: "全ユーザー割引", COMMON_COUPON: "共通クーポン", ONE_TIME_COUPON: "使い捨てクーポン" };
+const KIND: Record<string, string> = {
+  AUTO: "全ユーザー割引",
+  COMMON_COUPON: "共通クーポン",
+  ONE_TIME_COUPON: "使い捨てクーポン",
+};
 
 /** 全体管理者の売上・精算。各店舗の純売上(支払額 − 返金額)が精算の対象額 */
 export function AdminSales() {
@@ -62,9 +66,7 @@ export function AdminSales() {
                 </div>
               ))}
               <div className={cn("flex items-center justify-between pt-3 text-sm font-bold")}>
-                <span>
-                  全店舗の合計 ・ {r.totals.orders}件
-                </span>
+                <span>全店舗の合計 ・ {r.totals.orders}件</span>
                 <span className="text-xl font-extrabold tracking-tight">{money(r.totals.netSales)}</span>
               </div>
             </CardContent>
@@ -88,9 +90,7 @@ export function AdminSales() {
               ))}
             </CardContent>
           </Card>
-          <p className="text-xs text-muted-foreground">
-            純売上 = 支払額 − 返金額(割引は支払額にすでに反映)。店舗への精算の方法は運用に合わせて決めてください。
-          </p>
+          <p className="text-xs text-muted-foreground">純売上 = 支払額 − 返金額(割引は支払額にすでに反映)。店舗への精算の方法は運用に合わせて決めてください。</p>
         </>
       )}
     </div>

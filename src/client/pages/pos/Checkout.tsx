@@ -54,7 +54,10 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
   const reqId = useRequestId();
   const renewReq = reqId.renew;
 
-  const rows = cart.map((l) => ({ line: l, v: viewCartLine(l, products, sets) }));
+  const rows = cart.map((l) => ({
+    line: l,
+    v: viewCartLine(l, products, sets),
+  }));
   const unavailable = rows.some((r) => r.v.problem !== null);
   const localTotal = rows.reduce((s, r) => s + r.v.unit * r.line.quantity, 0);
   const items = toCartItems(cart);
@@ -75,7 +78,9 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
     }
     let alive = true;
     const t = window.setTimeout(() => {
-      api<Quote>(`/pos/${shopId}/pay/quote`, { body: { items, couponCode: coupon || undefined } })
+      api<Quote>(`/pos/${shopId}/pay/quote`, {
+        body: { items, couponCode: coupon || undefined },
+      })
         .then((q) => alive && setPreview(q))
         .catch(() => alive && setPreview(null));
     }, 250);
@@ -106,7 +111,13 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
       setError(null);
       setNotice(null);
       try {
-        const s = await api<PaySession>(`/pos/${shopId}/pay/scan`, { body: { token: value.trim(), items: latest.current.items, couponCode: latest.current.coupon || undefined } });
+        const s = await api<PaySession>(`/pos/${shopId}/pay/scan`, {
+          body: {
+            token: value.trim(),
+            items: latest.current.items,
+            couponCode: latest.current.coupon || undefined,
+          },
+        });
         setSession(s);
         setQuote(s.quote);
         setToken("");
@@ -164,7 +175,11 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
     setNotice(null);
     try {
       const r = await api<PayResult>(`/pos/${shopId}/pay/${session.sessionId}/commit`, {
-        body: { requestId: reqId.get(), expectedTotal: quote.total, ...(session.card ? { pin } : {}) },
+        body: {
+          requestId: reqId.get(),
+          expectedTotal: quote.total,
+          ...(session.card ? { pin } : {}),
+        },
       });
       setPin("");
       setResult(r);
@@ -197,7 +212,9 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
           setPinTries(tries);
           if (tries >= MAX_PIN_TRIES) {
             // 3回間違えたら、この読み取りは終わり。カードを読み取り直してもらう
-            await api(`/pos/${shopId}/pay/${session.sessionId}/cancel`, { body: {} }).catch(() => undefined);
+            await api(`/pos/${shopId}/pay/${session.sessionId}/cancel`, {
+              body: {},
+            }).catch(() => undefined);
             setSession(null);
             setQuote(null);
             setError(`PINを${MAX_PIN_TRIES}回間違えました。もう一度カードを読み取ってください`);
@@ -228,7 +245,10 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
   };
 
   const cancel = async () => {
-    if (session) await api(`/pos/${shopId}/pay/${session.sessionId}/cancel`, { body: {} }).catch(() => undefined);
+    if (session)
+      await api(`/pos/${shopId}/pay/${session.sessionId}/cancel`, {
+        body: {},
+      }).catch(() => undefined);
     setSession(null);
     setQuote(null);
     setNotice("取り消しました。お客様は新しいQRを表示してください");
@@ -284,7 +304,8 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
         <Card className="overflow-hidden">
           <div className="bg-secondary px-4 py-4">
             <p className="text-sm text-secondary-foreground">
-              {session.customer.nickname ?? "お客様"} さんのカード{session.card ? `(${session.card.displayNo})` : ""}
+              {session.customer.nickname ?? "お客様"} さんのカード
+              {session.card ? `(${session.card.displayNo})` : ""}
             </p>
             <p className="mt-1 text-4xl font-extrabold tracking-tight">{money(quote.total)}</p>
           </div>
@@ -292,10 +313,19 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
             <p className="text-center text-sm font-semibold">お客様に、4桁のPINを入力してもらってください</p>
             <PinPad value={pin} onChange={setPin} disabled={busy} />
             <ErrorText message={error} />
-            <p className="text-center text-xs text-muted-foreground">この確認の有効時間 あと {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}</p>
+            <p className="text-center text-xs text-muted-foreground">
+              この確認の有効時間 あと {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}
+            </p>
           </CardContent>
         </Card>
-        <Button size="lg" onClick={() => { setError(null); setStep("confirm"); }} disabled={pin.length !== 4 || left === 0}>
+        <Button
+          size="lg"
+          onClick={() => {
+            setError(null);
+            setStep("confirm");
+          }}
+          disabled={pin.length !== 4 || left === 0}
+        >
           次へ(内容の確認)
         </Button>
         <Button variant="outline" onClick={() => void cancel()} disabled={busy}>
@@ -315,22 +345,32 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
         <Card className="overflow-hidden">
           <div className="bg-secondary px-4 py-4">
             <p className="text-sm text-secondary-foreground">{session.customer.nickname ?? "お客様"} さん</p>
-            <p className="text-sm text-muted-foreground">{session.card ? `カード ${session.card.displayNo} ・ ` : ""}残高 {money(session.customer.balance)}</p>
+            <p className="text-sm text-muted-foreground">
+              {session.card ? `カード ${session.card.displayNo} ・ ` : ""}残高 {money(session.customer.balance)}
+            </p>
             <p className="mt-1 text-4xl font-extrabold tracking-tight">{money(quote.total)}</p>
-            {quote.cut && <Badge variant="destructive" className="mt-1">{quote.cut.name} 適用中</Badge>}
+            {quote.cut && (
+              <Badge variant="destructive" className="mt-1">
+                {quote.cut.name} 適用中
+              </Badge>
+            )}
           </div>
           <CardContent className="flex flex-col gap-1 pt-3 text-sm">
             {quote.lines.map((l, i) => (
               <QuoteLineRow key={`${l.productId}-${i}`} l={l} />
             ))}
             <DiscountRows subtotal={quote.subtotal} discounts={quote.discounts} />
-            <p className={cn("mt-2 text-sm font-semibold", short && "text-destructive")}>
-              {short ? `残高が ${money(-after)} 足りません` : `支払い後の残高 ${money(after)}`}
+            <p className={cn("mt-2 text-sm font-semibold", short && "text-destructive")}>{short ? `残高が ${money(-after)} 足りません` : `支払い後の残高 ${money(after)}`}</p>
+            <p className="text-xs text-muted-foreground">
+              この確認の有効時間 あと {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}
             </p>
-            <p className="text-xs text-muted-foreground">この確認の有効時間 あと {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}</p>
           </CardContent>
         </Card>
-        {notice && <p role="status" className="rounded-xl bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900">{notice}</p>}
+        {notice && (
+          <p role="status" className="rounded-xl bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900">
+            {notice}
+          </p>
+        )}
         <ErrorText message={error} />
         <Button size="lg" onClick={() => void commit()} disabled={busy || short || left === 0}>
           {busy ? "確定中…" : `${money(quote.total)} の支払いを確定する`}
@@ -381,7 +421,11 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
             </details>
           </CardContent>
         </Card>
-        {notice && <p role="status" className="rounded-xl bg-secondary px-3 py-2 text-sm font-semibold text-secondary-foreground">{notice}</p>}
+        {notice && (
+          <p role="status" className="rounded-xl bg-secondary px-3 py-2 text-sm font-semibold text-secondary-foreground">
+            {notice}
+          </p>
+        )}
         <ErrorText message={error} />
       </div>
     );
@@ -429,7 +473,11 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
           </Card>
         ))}
       </div>
-      {notice && <p role="status" className="rounded-xl bg-secondary px-3 py-2 text-sm font-semibold text-secondary-foreground">{notice}</p>}
+      {notice && (
+        <p role="status" className="rounded-xl bg-secondary px-3 py-2 text-sm font-semibold text-secondary-foreground">
+          {notice}
+        </p>
+      )}
       <ErrorText message={error} />
       {rows.length > 0 && (
         <Card className="p-3">
@@ -458,9 +506,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
             </Button>
           </form>
           {coupon && preview?.couponError && <p className="mt-2 text-sm font-semibold text-destructive">{preview.couponError}</p>}
-          {coupon && preview && !preview.couponError && preview.discounts.some((d) => d.kind !== "AUTO") && (
-            <p className="mt-2 text-sm font-semibold text-primary">クーポンを適用しました</p>
-          )}
+          {coupon && preview && !preview.couponError && preview.discounts.some((d) => d.kind !== "AUTO") && <p className="mt-2 text-sm font-semibold text-primary">クーポンを適用しました</p>}
         </Card>
       )}
       <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 border-t border-border bg-background px-4 py-3">
@@ -519,11 +565,7 @@ function QuoteLineRow({ l }: { l: QuoteLine }) {
           {money(l.lineTotal)}
         </span>
       </div>
-      {l.components && l.components.length > 0 && (
-        <p className="text-xs text-muted-foreground">
-          {l.components.map((c) => `${c.name}${c.surcharge > 0 ? `(+${c.surcharge})` : ""}`).join("、")}
-        </p>
-      )}
+      {l.components && l.components.length > 0 && <p className="text-xs text-muted-foreground">{l.components.map((c) => `${c.name}${c.surcharge > 0 ? `(+${c.surcharge})` : ""}`).join("、")}</p>}
     </div>
   );
 }

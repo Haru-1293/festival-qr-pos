@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useAction } from "@/lib/useAction";
 import { formatDateTime } from "@/lib/utils";
+import { useConfirm } from "@/lib/confirm";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const FILTERS: { id: Role | "ALL"; label: string }[] = [
   { id: "ALL", label: "すべて" },
@@ -22,17 +24,18 @@ const FILTERS: { id: Role | "ALL"; label: string }[] = [
 ];
 
 export function AdminUsers() {
+  const confirm = useConfirm();
   const [users, setUsers] = useState<UserDto[]>([]);
   const [shops, setShops] = useState<ShopDto[]>([]);
   const [filter, setFilter] = useState<Role | "ALL">("ALL");
-  const [qr, setQr] = useState<{ issued: ReceptionQrIssued; nickname: string } | null>(null);
+  const [qr, setQr] = useState<{
+    issued: ReceptionQrIssued;
+    nickname: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     const q = filter === "ALL" ? "" : `?role=${filter}`;
-    const [u, s] = await Promise.all([
-      api<{ users: UserDto[] }>(`/admin/users${q}`),
-      api<{ shops: ShopDto[] }>("/admin/shops"),
-    ]);
+    const [u, s] = await Promise.all([api<{ users: UserDto[] }>(`/admin/users${q}`), api<{ shops: ShopDto[] }>("/admin/shops")]);
     setUsers(u.users);
     setShops(s.shops);
   }, [filter]);
@@ -49,7 +52,14 @@ export function AdminUsers() {
   const submitManager = (e: FormEvent) => {
     e.preventDefault();
     void manager.run(async () => {
-      await api("/admin/users/shop-manager", { body: { shopId: mShop, loginId: mLogin, password: mPass, nickname: mNick } });
+      await api("/admin/users/shop-manager", {
+        body: {
+          shopId: mShop,
+          loginId: mLogin,
+          password: mPass,
+          nickname: mNick,
+        },
+      });
       setMNick("");
       setMLogin("");
       setMPass("");
@@ -63,7 +73,9 @@ export function AdminUsers() {
   const submitReception = (e: FormEvent) => {
     e.preventDefault();
     void reception.run(async () => {
-      const issued = await api<ReceptionQrIssued>("/admin/users/reception", { body: { nickname: rNick } });
+      const issued = await api<ReceptionQrIssued>("/admin/users/reception", {
+        body: { nickname: rNick },
+      });
       setQr({ issued, nickname: rNick });
       setRNick("");
       await load();
@@ -76,20 +88,36 @@ export function AdminUsers() {
     const pw = window.prompt(`${u.nickname} さんの新しいパスワード(8文字以上)`);
     if (!pw) return;
     void row.run(async () => {
-      await api(`/admin/users/${u.id}/reset-password`, { body: { password: pw } });
+      await api(`/admin/users/${u.id}/reset-password`, {
+        body: { password: pw },
+      });
       window.alert("パスワードを変更しました。本人に伝えてください");
     });
   };
-  const toggle = (u: UserDto) => {
+  const toggle = async (u: UserDto) => {
     const next = u.status === "ACTIVE" ? "SUSPENDED" : "ACTIVE";
-    if (next === "SUSPENDED" && !window.confirm(`${u.nickname} さんを利用停止にしますか?`)) return;
+    if (
+      next === "SUSPENDED" &&
+      !(await confirm(`${u.nickname} さんを利用停止にしますか?`, {
+        destructive: true,
+      }))
+    )
+      return;
     void row.run(async () => {
-      await api(`/admin/users/${u.id}/status`, { method: "PATCH", body: { status: next } });
+      await api(`/admin/users/${u.id}/status`, {
+        method: "PATCH",
+        body: { status: next },
+      });
       await load();
     });
   };
-  const reissueQr = (u: UserDto) => {
-    if (!window.confirm(`${u.nickname} さんのログインQRを再発行しますか?\n古いQRは直ちに使えなくなり、ログイン中の端末もログアウトされます。`)) return;
+  const reissueQr = async (u: UserDto) => {
+    if (
+      !(await confirm(`${u.nickname} さんのログインQRを再発行しますか?\n古いQRは直ちに使えなくなり、ログイン中の端末もログアウトされます。`, {
+        destructive: true,
+      }))
+    )
+      return;
     void row.run(async () => {
       const issued = await api<ReceptionQrIssued>(`/admin/users/${u.id}/reception-qr`, { body: { reason: "再発行" } });
       setQr({ issued, nickname: u.nickname });
@@ -100,7 +128,9 @@ export function AdminUsers() {
     const reason = window.prompt(`${u.nickname} さんのログインQRを失効します。理由を入力してください(例: 紛失)`);
     if (!reason) return;
     void row.run(async () => {
-      await api(`/admin/users/${u.id}/reception-qr/revoke`, { body: { reason } });
+      await api(`/admin/users/${u.id}/reception-qr/revoke`, {
+        body: { reason },
+      });
       await load();
     });
   };
@@ -120,19 +150,18 @@ export function AdminUsers() {
           <CardContent>
             <form onSubmit={submitManager} className="flex flex-col gap-3">
               <Field label="店舗">
-                <select
-                  className="h-12 rounded-lg border border-input bg-card px-3 text-base"
-                  value={mShop}
-                  onChange={(e) => setMShop(e.target.value)}
-                  required
-                >
-                  <option value="">選択してください</option>
-                  {shops.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.displayName}
-                    </option>
-                  ))}
-                </select>
+                <Select value={mShop} onValueChange={(v) => setMShop(v)}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="選択してください" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {shops.map((s) => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.displayName}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
               <Field label="表示名">
                 <Input value={mNick} onChange={(e) => setMNick(e.target.value)} maxLength={20} required />
@@ -180,9 +209,7 @@ export function AdminUsers() {
               <button
                 key={f.id}
                 onClick={() => setFilter(f.id)}
-                className={`rounded-full px-3 py-1.5 text-sm font-medium ${
-                  filter === f.id ? "bg-primary text-primary-foreground" : "bg-accent text-muted-foreground"
-                }`}
+                className={`rounded-full px-3 py-1.5 text-sm font-medium ${filter === f.id ? "bg-primary text-primary-foreground" : "bg-accent text-muted-foreground"}`}
               >
                 {f.label}
               </button>
@@ -225,9 +252,7 @@ export function AdminUsers() {
                         QR失効
                       </Button>
                     )}
-                    <span className="self-center text-xs text-muted-foreground">
-                      {u.loginQrIssuedAt ? `QR発行 ${formatDateTime(u.loginQrIssuedAt)}` : "有効なQRなし"}
-                    </span>
+                    <span className="self-center text-xs text-muted-foreground">{u.loginQrIssuedAt ? `QR発行 ${formatDateTime(u.loginQrIssuedAt)}` : "有効なQRなし"}</span>
                   </>
                 )}
                 <Button size="sm" variant="outline" onClick={() => toggle(u)} disabled={row.pending}>

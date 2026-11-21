@@ -9,17 +9,23 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
+import { useConfirm } from "@/lib/confirm";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /** 緊急停止: お金が動く入口(レジの読み取り・確定、受付のチャージ・払戻し、顧客のQR発行)を止める */
 function EmergencyCard() {
+  const confirm = useConfirm();
   const { settings, refresh } = useAuth();
   const [message, setMessage] = useState(settings.emergency.message);
   const action = useAction();
   const on = settings.emergency.on;
-  const set = (next: boolean) => {
-    if (next && !window.confirm("緊急停止すると、すべてのレジの決済と受付のチャージ・払戻しが止まります。よろしいですか?")) return;
+  const set = async (next: boolean) => {
+    if (next && !(await confirm("緊急停止すると、すべてのレジの決済と受付のチャージ・払戻しが止まります。よろしいですか?", { destructive: true }))) return;
     void action.run(async () => {
-      await api("/admin/settings/emergency", { method: "PUT", body: { on: next, message } });
+      await api("/admin/settings/emergency", {
+        method: "PUT",
+        body: { on: next, message },
+      });
       await refresh();
     });
   };
@@ -28,7 +34,8 @@ function EmergencyCard() {
       <CardHeader>
         <CardTitle>緊急停止</CardTitle>
         <CardDescription>
-          障害や不正の疑いがあるときに、お金が動く操作だけを止めます。返金・訂正・途中回収・現金の締めと、この管理画面は使えます。いまは{on ? "停止中です" : "通常どおり動いています"}。
+          障害や不正の疑いがあるときに、お金が動く操作だけを止めます。返金・訂正・途中回収・現金の締めと、この管理画面は使えます。いまは
+          {on ? "停止中です" : "通常どおり動いています"}。
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -62,7 +69,11 @@ export function AdminSettings() {
   const [saved, setSaved] = useState<string | null>(null);
   const currency = useAction();
   const festival = useAction();
-  const [ops, setOps] = useState<OperationSettings>({ closingMode: "DAY", qrTtlSeconds: 300, paymentSessionSeconds: 300 });
+  const [ops, setOps] = useState<OperationSettings>({
+    closingMode: "DAY",
+    qrTtlSeconds: 300,
+    paymentSessionSeconds: 300,
+  });
   const opsAction = useAction();
 
   useEffect(() => {
@@ -96,7 +107,10 @@ export function AdminSettings() {
   const saveFestival = (e: FormEvent) => {
     e.preventDefault();
     void festival.run(async () => {
-      await api("/admin/settings/festival-name", { method: "PUT", body: { name: festivalName } });
+      await api("/admin/settings/festival-name", {
+        method: "PUT",
+        body: { name: festivalName },
+      });
       await refresh();
       setSaved("学園祭名を保存しました");
     });
@@ -119,24 +133,26 @@ export function AdminSettings() {
               <Input value={c.shortName} onChange={(e) => setC({ ...c, shortName: e.target.value })} maxLength={8} required />
             </Field>
             <Field label="表示位置">
-              <select
-                className="h-12 rounded-lg border border-input bg-card px-3 text-base"
+              <Select
                 value={c.symbolPosition}
-                onChange={(e) => setC({ ...c, symbolPosition: e.target.value as CurrencySettings["symbolPosition"] })}
+                onValueChange={(v) =>
+                  setC({
+                    ...c,
+                    symbolPosition: v as CurrencySettings["symbolPosition"],
+                  })
+                }
               >
-                <option value="after">数値の後(500pt)</option>
-                <option value="before">数値の前(pt500)</option>
-              </select>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="after">数値の後(500pt)</SelectItem>
+                  <SelectItem value="before">数値の前(pt500)</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
             <Field label="1単位あたりの円" hint="受付・利用者への案内用。既存の残高は自動で換算されません">
-              <Input
-                type="number"
-                min={0.01}
-                step="any"
-                value={c.yenPerUnit}
-                onChange={(e) => setC({ ...c, yenPerUnit: Number(e.target.value) })}
-                required
-              />
+              <Input type="number" min={0.01} step="any" value={c.yenPerUnit} onChange={(e) => setC({ ...c, yenPerUnit: Number(e.target.value) })} required />
             </Field>
             <Field label="説明文">
               <Input value={c.description} onChange={(e) => setC({ ...c, description: e.target.value })} maxLength={200} />
@@ -158,21 +174,42 @@ export function AdminSettings() {
         <CardContent>
           <form onSubmit={saveOps} className="flex flex-col gap-3">
             <Field label="現金の締めの単位">
-              <select
-                className="h-12 rounded-lg border border-input bg-card px-3 text-base"
+              <Select
                 value={ops.closingMode}
-                onChange={(e) => setOps({ ...ops, closingMode: e.target.value as OperationSettings["closingMode"] })}
+                onValueChange={(v) =>
+                  setOps({
+                    ...ops,
+                    closingMode: v as OperationSettings["closingMode"],
+                  })
+                }
               >
-                <option value="DAY">日次(全受付をまとめて管理者が締める)</option>
-                <option value="SHIFT">担当者交代ごと(受付が自分で締める)</option>
-                <option value="MANUAL">手動(管理者が必要なときに締める)</option>
-              </select>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="DAY">日次(全受付をまとめて管理者が締める)</SelectItem>
+                  <SelectItem value="SHIFT">担当者交代ごと(受付が自分で締める)</SelectItem>
+                  <SelectItem value="MANUAL">手動(管理者が必要なときに締める)</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
             <Field label="提示用QRの有効時間(秒)" hint="60〜1800秒。既定は300秒(5分)">
               <Input type="number" min={60} max={1800} value={ops.qrTtlSeconds} onChange={(e) => setOps({ ...ops, qrTtlSeconds: Number(e.target.value) })} required />
             </Field>
             <Field label="決済セッションの有効時間(秒)" hint="お客様のQRを読み取ってから支払いを確定するまでの猶予。60〜1800秒。既定は300秒(5分)">
-              <Input type="number" min={60} max={1800} value={ops.paymentSessionSeconds} onChange={(e) => setOps({ ...ops, paymentSessionSeconds: Number(e.target.value) })} required />
+              <Input
+                type="number"
+                min={60}
+                max={1800}
+                value={ops.paymentSessionSeconds}
+                onChange={(e) =>
+                  setOps({
+                    ...ops,
+                    paymentSessionSeconds: Number(e.target.value),
+                  })
+                }
+                required
+              />
             </Field>
             <ErrorText message={opsAction.error} />
             <Button type="submit" disabled={opsAction.pending}>

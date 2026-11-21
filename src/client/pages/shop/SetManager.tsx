@@ -9,6 +9,9 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
+import { useConfirm } from "@/lib/confirm";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface SegDraft {
   id?: string;
@@ -28,11 +31,26 @@ interface Draft {
   segments: SegDraft[];
 }
 const digits = (s: string) => s.replace(/[^0-9]/g, "");
-const newSeg = (): SegDraft => ({ name: "", required: true, pickCount: "1", allowDuplicate: false, items: [] });
-const EMPTY: Draft = { id: null, name: "", price: "", description: "", discountable: true, sortOrder: "0", segments: [newSeg()] };
+const newSeg = (): SegDraft => ({
+  name: "",
+  required: true,
+  pickCount: "1",
+  allowDuplicate: false,
+  items: [],
+});
+const EMPTY: Draft = {
+  id: null,
+  name: "",
+  price: "",
+  description: "",
+  discountable: true,
+  sortOrder: "0",
+  segments: [newSeg()],
+};
 
 /** 店舗責任者のセット管理。内訳(フード・ドリンクなど)ごとに選べる商品と追加料金を決める。変更はレジへすぐ反映される */
 export function SetManager({ shopId }: { shopId: string }) {
+  const confirm = useConfirm();
   const { money } = useAuth();
   const [sets, setSets] = useState<SetDto[]>([]);
   const [products, setProducts] = useState<ProductDto[]>([]);
@@ -66,7 +84,10 @@ export function SetManager({ shopId }: { shopId: string }) {
         required: g.required,
         pickCount: String(g.pickCount),
         allowDuplicate: g.allowDuplicate,
-        items: g.items.map((i) => ({ productId: i.productId, surcharge: String(i.surcharge) })),
+        items: g.items.map((i) => ({
+          productId: i.productId,
+          surcharge: String(i.surcharge),
+        })),
       })),
     });
 
@@ -96,19 +117,26 @@ export function SetManager({ shopId }: { shopId: string }) {
         required: g.required,
         pickCount: Number(g.pickCount || 1),
         allowDuplicate: g.allowDuplicate,
-        items: g.items.map((i) => ({ productId: i.productId, surcharge: Number(i.surcharge || 0) })),
+        items: g.items.map((i) => ({
+          productId: i.productId,
+          surcharge: Number(i.surcharge || 0),
+        })),
       })),
     } as SetInput;
     void form.run(async () => {
-      if (draft.id) await api(`/catalog/${shopId}/sets/${draft.id}`, { method: "PUT", body });
+      if (draft.id)
+        await api(`/catalog/${shopId}/sets/${draft.id}`, {
+          method: "PUT",
+          body,
+        });
       else await api(`/catalog/${shopId}/sets`, { body });
       setDraft(null);
       await load();
     });
   };
 
-  const setStatus = (s: SetDto, status: "ACTIVE" | "STOPPED" | "ARCHIVED") => {
-    if (status === "ARCHIVED" && !window.confirm(`「${s.name}」をアーカイブしますか?(売った履歴は残ります)`)) return;
+  const setStatus = async (s: SetDto, status: "ACTIVE" | "STOPPED" | "ARCHIVED") => {
+    if (status === "ARCHIVED" && !(await confirm(`「${s.name}」をアーカイブしますか?(売った履歴は残ります)`, { destructive: true }))) return;
     void row.run(async () => {
       await api(`/catalog/${shopId}/sets/${s.id}/status`, { body: { status } });
       await load();
@@ -134,7 +162,7 @@ export function SetManager({ shopId }: { shopId: string }) {
               <Input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} maxLength={300} />
             </Field>
             <label className="flex items-center gap-2 text-sm font-medium">
-              <input type="checkbox" className="size-5" checked={draft.discountable} onChange={(e) => setDraft({ ...draft, discountable: e.target.checked })} />
+              <Checkbox checked={draft.discountable} onCheckedChange={(c) => setDraft({ ...draft, discountable: c === true })} />
               一律値下げの対象にする
             </label>
             <Field label="表示順(小さいほど先)">
@@ -148,7 +176,17 @@ export function SetManager({ shopId }: { shopId: string }) {
                   <div className="flex items-end gap-2">
                     <div className="min-w-0 flex-1">
                       <Field label="内訳の名前(例: フード)">
-                        <Input value={g.name} onChange={(e) => patchSeg(gi, (x) => ({ ...x, name: e.target.value }))} maxLength={30} required />
+                        <Input
+                          value={g.name}
+                          onChange={(e) =>
+                            patchSeg(gi, (x) => ({
+                              ...x,
+                              name: e.target.value,
+                            }))
+                          }
+                          maxLength={30}
+                          required
+                        />
                       </Field>
                     </div>
                     <Button type="button" size="icon" variant="ghost" aria-label="上へ" onClick={() => moveSeg(gi, -1)} disabled={gi === 0}>
@@ -163,7 +201,12 @@ export function SetManager({ shopId }: { shopId: string }) {
                       variant="ghost"
                       aria-label="この内訳を削除"
                       disabled={draft.segments.length === 1}
-                      onClick={() => setDraft({ ...draft, segments: draft.segments.filter((_, k) => k !== gi) })}
+                      onClick={() =>
+                        setDraft({
+                          ...draft,
+                          segments: draft.segments.filter((_, k) => k !== gi),
+                        })
+                      }
                     >
                       <Trash2 />
                     </Button>
@@ -171,13 +214,41 @@ export function SetManager({ shopId }: { shopId: string }) {
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
                     <label className="flex items-center gap-2">
                       選ぶ数
-                      <Input className="h-10 w-16" inputMode="numeric" value={g.pickCount} onChange={(e) => patchSeg(gi, (x) => ({ ...x, pickCount: digits(e.target.value) }))} />
+                      <Input
+                        className="h-10 w-16"
+                        inputMode="numeric"
+                        value={g.pickCount}
+                        onChange={(e) =>
+                          patchSeg(gi, (x) => ({
+                            ...x,
+                            pickCount: digits(e.target.value),
+                          }))
+                        }
+                      />
                     </label>
                     <label className="flex items-center gap-2">
-                      <input type="checkbox" className="size-5" checked={g.required} onChange={(e) => patchSeg(gi, (x) => ({ ...x, required: e.target.checked }))} /> 必須
+                      <Checkbox
+                        checked={g.required}
+                        onCheckedChange={(c) =>
+                          patchSeg(gi, (x) => ({
+                            ...x,
+                            required: c === true,
+                          }))
+                        }
+                      />{" "}
+                      必須
                     </label>
                     <label className="flex items-center gap-2">
-                      <input type="checkbox" className="size-5" checked={g.allowDuplicate} onChange={(e) => patchSeg(gi, (x) => ({ ...x, allowDuplicate: e.target.checked }))} /> 同じ商品を重ねて選べる
+                      <Checkbox
+                        checked={g.allowDuplicate}
+                        onCheckedChange={(c) =>
+                          patchSeg(gi, (x) => ({
+                            ...x,
+                            allowDuplicate: c === true,
+                          }))
+                        }
+                      />{" "}
+                      同じ商品を重ねて選べる
                     </label>
                   </div>
                   <div className="flex flex-col gap-1.5">
@@ -190,36 +261,67 @@ export function SetManager({ shopId }: { shopId: string }) {
                           inputMode="numeric"
                           aria-label="追加料金"
                           value={it.surcharge}
-                          onChange={(e) => patchSeg(gi, (x) => ({ ...x, items: x.items.map((y, k) => (k === ii ? { ...y, surcharge: digits(e.target.value) } : y)) }))}
+                          onChange={(e) =>
+                            patchSeg(gi, (x) => ({
+                              ...x,
+                              items: x.items.map((y, k) => (k === ii ? { ...y, surcharge: digits(e.target.value) } : y)),
+                            }))
+                          }
                         />
                         <span className="text-xs text-muted-foreground">円</span>
-                        <Button type="button" size="icon" variant="ghost" aria-label="外す" onClick={() => patchSeg(gi, (x) => ({ ...x, items: x.items.filter((_, k) => k !== ii) }))}>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          aria-label="外す"
+                          onClick={() =>
+                            patchSeg(gi, (x) => ({
+                              ...x,
+                              items: x.items.filter((_, k) => k !== ii),
+                            }))
+                          }
+                        >
                           <Trash2 />
                         </Button>
                       </div>
                     ))}
-                    <select
-                      className="h-11 rounded-lg border border-input bg-card px-3 text-sm"
-                      aria-label="商品を追加"
+                    <Select
                       value=""
-                      onChange={(e) => {
-                        const pid = e.target.value;
-                        if (pid) patchSeg(gi, (x) => ({ ...x, items: [...x.items, { productId: pid, surcharge: "0" }] }));
+                      onValueChange={(pid) => {
+                        if (pid)
+                          patchSeg(gi, (x) => ({
+                            ...x,
+                            items: [...x.items, { productId: pid, surcharge: "0" }],
+                          }));
                       }}
                     >
-                      <option value="">＋ 選べる商品を追加…</option>
-                      {usable
-                        .filter((p) => !g.items.some((i) => i.productId === p.id))
-                        .map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                    </select>
+                      <SelectTrigger className="h-11 text-sm" aria-label="商品を追加">
+                        <SelectValue placeholder="＋ 選べる商品を追加…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {usable
+                          .filter((p) => !g.items.some((i) => i.productId === p.id))
+                          .map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.name}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               ))}
-              <Button type="button" variant="outline" onClick={() => setDraft({ ...draft, segments: [...draft.segments, newSeg()] })} disabled={draft.segments.length >= 8}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() =>
+                  setDraft({
+                    ...draft,
+                    segments: [...draft.segments, newSeg()],
+                  })
+                }
+                disabled={draft.segments.length >= 8}
+              >
                 <Plus /> 内訳を追加
               </Button>
             </div>

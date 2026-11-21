@@ -10,8 +10,17 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 import { formatDateTime } from "@/lib/utils";
+import { useConfirm } from "@/lib/confirm";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 
-const STATE_LABEL: Record<string, string> = { RUNNING: "有効", SCHEDULED: "開始前", ENDED: "終了", STOPPED: "停止中", USED_UP: "上限到達" };
+const STATE_LABEL: Record<string, string> = {
+  RUNNING: "有効",
+  SCHEDULED: "開始前",
+  ENDED: "終了",
+  STOPPED: "停止中",
+  USED_UP: "上限到達",
+};
 const digits = (s: string) => s.replace(/[^0-9]/g, "");
 const toMs = (v: string): number | null => {
   if (!v) return null;
@@ -31,7 +40,16 @@ interface RuleForm {
   endsAt: string;
   shopIds: string[];
 }
-const emptyRule = (name: string): RuleForm => ({ name, method: "PERCENT", value: "10", min: "", max: "", startsAt: "", endsAt: "", shopIds: [] });
+const emptyRule = (name: string): RuleForm => ({
+  name,
+  method: "PERCENT",
+  value: "10",
+  min: "",
+  max: "",
+  startsAt: "",
+  endsAt: "",
+  shopIds: [],
+});
 
 function RuleFields({ f, set, shops }: { f: RuleForm; set: (p: Partial<RuleForm>) => void; shops: ShopDto[] }) {
   return (
@@ -41,10 +59,15 @@ function RuleFields({ f, set, shops }: { f: RuleForm; set: (p: Partial<RuleForm>
       </Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="割引のしかた">
-          <select className="h-12 rounded-lg border border-input bg-card px-3 text-base" value={f.method} onChange={(e) => set({ method: e.target.value as DiscountMethod })}>
-            <option value="PERCENT">割合(○%引き)</option>
-            <option value="FIXED">金額(○引き)</option>
-          </select>
+          <Select value={f.method} onValueChange={(v) => set({ method: v as DiscountMethod })}>
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="PERCENT">割合(○%引き)</SelectItem>
+              <SelectItem value="FIXED">金額(○引き)</SelectItem>
+            </SelectContent>
+          </Select>
         </Field>
         <Field label={f.method === "PERCENT" ? "割合(%)" : "割引額"}>
           <Input inputMode="numeric" value={f.value} onChange={(e) => set({ value: digits(e.target.value) })} required className="h-12 text-lg font-bold" />
@@ -75,7 +98,11 @@ function RuleFields({ f, set, shops }: { f: RuleForm; set: (p: Partial<RuleForm>
                 type="button"
                 key={s.id}
                 aria-pressed={on}
-                onClick={() => set({ shopIds: on ? f.shopIds.filter((x) => x !== s.id) : [...f.shopIds, s.id] })}
+                onClick={() =>
+                  set({
+                    shopIds: on ? f.shopIds.filter((x) => x !== s.id) : [...f.shopIds, s.id],
+                  })
+                }
                 className={`h-9 rounded-full border px-3 text-sm font-semibold ${on ? "border-primary bg-primary text-primary-foreground" : "border-input bg-card"}`}
               >
                 {s.displayName}
@@ -104,6 +131,7 @@ const ruleBody = (f: RuleForm) => ({
 
 /** 全体管理者の「割引・クーポン」管理(仕様 v0.2 §14) */
 export function DiscountManager() {
+  const confirm = useConfirm();
   const { money } = useAuth();
   const [autos, setAutos] = useState<AutoDiscountDto[]>([]);
   const [coupons, setCoupons] = useState<CouponDto[]>([]);
@@ -136,13 +164,15 @@ export function DiscountManager() {
   const shopNames = (ids: string[]) => (ids.length === 0 ? "全店舗" : ids.map((i) => shops.find((s) => s.id === i)?.displayName ?? "?").join("、"));
   const desc = (r: { method: DiscountMethod; value: number; minOrderAmount: number | null; maxDiscountAmount: number | null }) =>
     `${r.method === "PERCENT" ? `${r.value}%引き` : `${money(r.value)}引き`}${r.minOrderAmount ? ` ・ ${money(r.minOrderAmount)}以上` : ""}${r.maxDiscountAmount ? ` ・ 最大${money(r.maxDiscountAmount)}` : ""}`;
-  const period = (r: { startsAt: number | null; endsAt: number | null }) =>
-    `${r.startsAt ? formatDateTime(r.startsAt) : "すぐ"} 〜 ${r.endsAt ? formatDateTime(r.endsAt) : "止めるまで"}`;
+  const period = (r: { startsAt: number | null; endsAt: number | null }) => `${r.startsAt ? formatDateTime(r.startsAt) : "すぐ"} 〜 ${r.endsAt ? formatDateTime(r.endsAt) : "止めるまで"}`;
 
   const submitAuto = (e: FormEvent) => {
     e.preventDefault();
     void createAuto.run(async () => {
-      const body: AutoDiscountInput = { ...ruleBody(af), combinableWithCoupon: aCombine };
+      const body: AutoDiscountInput = {
+        ...ruleBody(af),
+        combinableWithCoupon: aCombine,
+      };
       await api("/discounts/auto", { body });
       await load();
     });
@@ -167,8 +197,8 @@ export function DiscountManager() {
       await load();
     });
   };
-  const setAutoStatus = (a: AutoDiscountDto, status: "ACTIVE" | "STOPPED") => {
-    if (status === "STOPPED" && !window.confirm(`「${a.name}」を停止しますか?\nレジの会計からすぐに外れます。`)) return;
+  const setAutoStatus = async (a: AutoDiscountDto, status: "ACTIVE" | "STOPPED") => {
+    if (status === "STOPPED" && !(await confirm(`「${a.name}」を停止しますか?\nレジの会計からすぐに外れます。`, { destructive: true }))) return;
     void row.run(async () => {
       await api(`/discounts/auto/${a.id}/status`, { body: { status } });
       await load();
@@ -195,7 +225,7 @@ export function DiscountManager() {
             <form onSubmit={submitAuto} className="flex flex-col gap-3">
               <RuleFields f={af} set={(p) => setAf({ ...af, ...p })} shops={shops} />
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={aCombine} onChange={(e) => setACombine(e.target.checked)} className="size-4" />
+                <Checkbox className="size-4" checked={aCombine} onCheckedChange={(c) => setACombine(c === true)} />
                 クーポンと併用できる
               </label>
               <ErrorText message={createAuto.error} />
@@ -216,10 +246,15 @@ export function DiscountManager() {
           <CardContent>
             <form onSubmit={submitCoupon} className="flex flex-col gap-3">
               <Field label="種類">
-                <select className="h-12 rounded-lg border border-input bg-card px-3 text-base" value={kind} onChange={(e) => setKind(e.target.value as "COMMON" | "ONE_TIME")}>
-                  <option value="COMMON">共通コード(みんなが同じコードを使う)</option>
-                  <option value="ONE_TIME">使い捨てコード(1回使うと無効)</option>
-                </select>
+                <Select value={kind} onValueChange={(v) => setKind(v as "COMMON" | "ONE_TIME")}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="COMMON">共通コード(みんなが同じコードを使う)</SelectItem>
+                    <SelectItem value="ONE_TIME">使い捨てコード(1回使うと無効)</SelectItem>
+                  </SelectContent>
+                </Select>
               </Field>
               <RuleFields f={cf} set={(p) => setCf({ ...cf, ...p })} shops={shops} />
               <Field label={kind === "COMMON" ? "コード(英数字・ハイフン)" : "コード(空欄なら自動で作ります)"}>
@@ -244,7 +279,7 @@ export function DiscountManager() {
                 <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={100} />
               </Field>
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={cCombine} onChange={(e) => setCCombine(e.target.checked)} className="size-4" />
+                <Checkbox className="size-4" checked={cCombine} onCheckedChange={(c) => setCCombine(c === true)} />
                 全ユーザー割引と併用できる
               </label>
               <ErrorText message={createCoupon.error} />
@@ -307,8 +342,8 @@ export function DiscountManager() {
               </p>
               <p className="text-xs text-muted-foreground">
                 {c.kind === "COMMON" ? "共通" : "使い捨て"} ・ {shopNames(c.shopIds)} ・ {period(c)} ・ 使用 {c.usedCount}
-                {c.totalLimit !== null ? ` / ${c.totalLimit}` : ""}回
-                {c.perWalletLimit !== null ? ` ・ 1人${c.perWalletLimit}回まで` : ""} ・ {c.combinableWithAuto ? "全ユーザー割引と併用可" : "併用不可"}
+                {c.totalLimit !== null ? ` / ${c.totalLimit}` : ""}回{c.perWalletLimit !== null ? ` ・ 1人${c.perWalletLimit}回まで` : ""} ・{" "}
+                {c.combinableWithAuto ? "全ユーザー割引と併用可" : "併用不可"}
                 {c.note ? ` ・ ${c.note}` : ""}
               </p>
               {c.status !== "ENDED" && (
