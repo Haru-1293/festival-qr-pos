@@ -123,6 +123,21 @@ expect "焼きそば 3個" 3 "$(py "print([p['quantity'] for p in d['products'] 
 req $MGR GET /api/reports/shops/$SB/products; check "他店舗は403" 403
 req $CLERK GET /api/reports/shops/$SA/products; check "店員は403" 403
 
+echo "== 店舗別の詳細(サマリ・取引履歴) =="
+req $ADMIN GET /api/reports/shops/$SA/summary; check "管理者は店舗サマリを見られる" 200
+expect "サマリの件数は売上画面と一致" "$(req $ADMIN GET /api/reports/sales; python3 -I -c "import json;d=json.load(open('$TMP/body'));print([s['orders'] for s in d['shops'] if s['shopId']=='$SA'][0])")" "$(req $ADMIN GET /api/reports/shops/$SA/summary; jget "['shop']['orders']")"
+req $MGR GET /api/reports/shops/$SA/summary; check "責任者は自店舗のサマリ" 200
+req $MGR GET /api/reports/shops/$SB/summary; check "他店舗のサマリは403" 403
+req $CLERK GET /api/reports/shops/$SA/summary; check "店員は403" 403
+req $ADMIN GET /api/reports/shops/00000000000000000000000000/summary; check "存在しない店舗は404" 404
+req $ADMIN GET /api/reports/shops/$SA/orders; check "取引履歴" 200
+expect "取引履歴の件数(CSVと同じ3件)" 3 "$(jget "['orders'].__len__()")"
+expect "新しい順" True "$(jget "['orders'][0]['paidAt'] >= d['orders'][-1]['paidAt']")"
+req $ADMIN GET "/api/reports/shops/$SA/orders?limit=2"; expect "ページ分け: 2件" 2 "$(jget "['orders'].__len__()")"
+NXT=$(jget "['next']"); req $ADMIN GET "/api/reports/shops/$SA/orders?limit=2&before=$NXT"; check "次のページ" 200
+req $MGR GET /api/reports/shops/$SB/orders; check "他店舗の取引履歴は403" 403
+req $CLERK GET /api/reports/shops/$SA/orders; check "店員は取引履歴を見られない" 403
+
 echo "== CSV =="
 curl -s -D $TMP/h -o $TMP/sales.csv -b $ADMIN $BASE/api/reports/sales.csv
 expect "content-type" "text/csv; charset=utf-8" "$(grep -i '^content-type' $TMP/h | tr -d '\r' | cut -d' ' -f2-)"

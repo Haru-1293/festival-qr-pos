@@ -1,5 +1,6 @@
 import { Download } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import type { SalesReport } from "@shared/api";
 import { PeriodPicker, periodQuery, type Period } from "@/components/PeriodPicker";
 import { ErrorText } from "@/components/Shell";
@@ -71,7 +72,14 @@ export function AdminSales() {
                       <p className="text-xl font-extrabold tracking-tight">{money(s.netSales)}</p>
                     </div>
                   </button>
-                  {open === s.shopId && <ShopSales shopId={s.shopId} period={period} />}
+                  {open === s.shopId && (
+                    <>
+                      <Button asChild variant="outline" size="sm" className="self-start">
+                        <Link to={`/admin/shops/${s.shopId}`}>店舗の詳細ページを開く</Link>
+                      </Button>
+                      <ShopSales shopId={s.shopId} period={period} />
+                    </>
+                  )}
                 </div>
               ))}
               <div className={cn("flex items-center justify-between pt-3 text-sm font-bold")}>

@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { AuditEntryDto, SalesReport, TimeSeriesPoint } from "@shared/api";
+import type { AuditEntryDto, SalesReport, ShopOrderRow, ShopSalesSummary, TimeSeriesPoint } from "@shared/api";
 import type { AppEnv } from "../env";
-import { badRequest } from "../lib/errors";
+import { badRequest, notFound } from "../lib/errors";
 import { zv as zValidator } from "../lib/validate";
 import { assertShopAccess, requireAuth, requireRole } from "../middleware/auth";
 
@@ -135,6 +135,101 @@ export const reportRoutes = new Hono<AppEnv>()
     c.header("Cache-Control", "no-store");
     return c.json({ products: await productRows(c.env.DB, c.req.valid("param").shopId, from, to) });
   })
+
+  // 店舗の売上サマリ(期間内の件数・支払・返金・割引・純売上、支払い方法別、割引の内訳)
+  .get("/shops/:shopId/summary", requireRole("ADMIN", "SHOP_MANAGER"), shopParam, zValidator("query", range), async (c) => {
+    const { shopId } = c.req.valid("param");
+    assertShopAccess(requireAuth(c), shopId);
+    const [from, to] = bounds(c.req.valid("query"));
+    const db = c.env.DB;
+    const [head, src, discs] = await Promise.all([
+      db
+        .prepare(
+          `SELECT s.id AS shop_id, s.display_name AS name, s.status, COUNT(o.id) AS orders,
+                  COALESCE(SUM(o.subtotal),0) AS subtotal, COALESCE(SUM(o.discount_total),0) AS discount_total,
+                  COALESCE(SUM(o.total_paid),0) AS paid_total, COALESCE(SUM(o.refunded_total),0) AS refunded_total
+             FROM shops s LEFT JOIN orders o ON o.shop_id = s.id AND ${ORDER_WHERE} WHERE s.id = ? GROUP BY s.id`,
+        )
+        .bind(from, to, shopId)
+        .first<{ shop_id: string; name: string; status: ShopSalesSummary["shop"]["status"]; orders: number; subtotal: number; discount_total: number; paid_total: number; refunded_total: number }>(),
+      db
+        .prepare(`SELECT o.pay_source AS source, COUNT(*) AS orders, SUM(o.total_paid) AS paid FROM orders o WHERE o.shop_id = ? AND ${ORDER_WHERE} GROUP BY o.pay_source`)
+        .bind(shopId, from, to)
+        .all<{ source: string; orders: number; paid: number }>(),
+      db
+        .prepare(
+          `SELECT d.kind, d.name_snapshot AS name, COUNT(*) AS n, SUM(d.amount) AS amount
+             FROM order_discounts d JOIN orders o ON o.id = d.order_id
+            WHERE o.shop_id = ? AND ${ORDER_WHERE} GROUP BY d.kind, d.name_snapshot ORDER BY amount DESC`,
+        )
+        .bind(shopId, from, to)
+        .all<{ kind: "AUTO" | "COMMON_COUPON" | "ONE_TIME_COUPON"; name: string; n: number; amount: number }>(),
+    ]);
+    if (!head) throw notFound("店舗が見つかりません");
+    c.header("Cache-Control", "no-store");
+    return c.json({
+      from,
+      to,
+      shop: {
+        shopId: head.shop_id,
+        name: head.name,
+        status: head.status,
+        orders: head.orders,
+        subtotal: head.subtotal,
+        discountTotal: head.discount_total,
+        paidTotal: head.paid_total,
+        refundedTotal: head.refunded_total,
+        netSales: head.paid_total - head.refunded_total,
+      },
+      discounts: discs.results.map((d) => ({ kind: d.kind, name: d.name, count: d.n, amount: d.amount })),
+      bySource: src.results.map((r) => ({ source: r.source === "CARD" ? "CARD" : "PHONE", orders: r.orders, paid: r.paid })),
+    } satisfies ShopSalesSummary);
+  })
+
+  // 店舗の取引履歴(新しい順。before=この時刻より前、20件ずつ)
+  .get(
+    "/shops/:shopId/orders",
+    requireRole("ADMIN", "SHOP_MANAGER"),
+    shopParam,
+    zValidator("query", range.extend({ before: z.coerce.number().int().min(0).optional(), limit: z.coerce.number().int().min(1).max(100).default(30) })),
+    async (c) => {
+      const { shopId } = c.req.valid("param");
+      assertShopAccess(requireAuth(c), shopId);
+      const q = c.req.valid("query");
+      const [from, to] = bounds(q);
+      const upper = Math.min(to, q.before ?? to);
+      const { results } = await c.env.DB
+        .prepare(
+          `SELECT o.id, o.order_no, o.paid_at, o.pay_source, o.subtotal, o.discount_total, o.total_paid, o.refunded_total, o.status,
+                  (SELECT group_concat(name_snapshot || '×' || quantity, ' / ') FROM order_lines l WHERE l.order_id = o.id) AS items,
+                  u.nickname AS clerk
+             FROM orders o LEFT JOIN users u ON u.id = o.clerk_user_id
+            WHERE o.shop_id = ? AND ${ORDER_WHERE} ORDER BY o.paid_at DESC, o.id DESC LIMIT ?`,
+        )
+        .bind(shopId, from, upper, q.limit + 1)
+        .all<{ id: string; order_no: string; paid_at: number; pay_source: string; subtotal: number; discount_total: number; total_paid: number; refunded_total: number; status: string; items: string | null; clerk: string | null }>();
+      const page = results.slice(0, q.limit);
+      c.header("Cache-Control", "no-store");
+      return c.json({
+        orders: page.map(
+          (o): ShopOrderRow => ({
+            id: o.id,
+            orderNo: o.order_no,
+            paidAt: o.paid_at,
+            source: o.pay_source === "CARD" ? "CARD" : "PHONE",
+            subtotal: o.subtotal,
+            discountTotal: o.discount_total,
+            totalPaid: o.total_paid,
+            refundedTotal: o.refunded_total,
+            status: o.status,
+            items: o.items,
+            clerkNickname: o.clerk,
+          }),
+        ),
+        next: results.length > q.limit ? page[page.length - 1].paid_at : null,
+      });
+    },
+  )
 
   .get("/shops/:shopId/orders.csv", requireRole("ADMIN", "SHOP_MANAGER"), shopParam, zValidator("query", range), async (c) => {
     const { shopId } = c.req.valid("param");

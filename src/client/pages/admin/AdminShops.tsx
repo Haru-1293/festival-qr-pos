@@ -1,4 +1,5 @@
 import { Store } from "lucide-react";
+import { Link } from "react-router-dom";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { ShopDto } from "@shared/api";
 import { ErrorText, Field } from "@/components/Shell";
@@ -78,7 +79,9 @@ export function AdminShops() {
           {shops.map((s) => (
             <div key={s.id} className="flex items-center justify-between gap-2 py-3">
               <div className="min-w-0">
-                <p className="truncate font-semibold">{s.displayName}</p>
+                <Link to={`/admin/shops/${s.id}`} className="block truncate font-semibold hover:underline">
+                  {s.displayName}
+                </Link>
                 <Badge variant={s.status === "ACTIVE" ? "default" : "warning"} className="mt-1">
                   {STATUS_LABEL[s.status]}
                 </Badge>

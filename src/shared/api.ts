@@ -580,6 +580,29 @@ export interface SalesReport {
   totals: Omit<SalesRow, "shopId" | "name">;
   discounts: { kind: "AUTO" | "COMMON_COUPON" | "ONE_TIME_COUPON"; name: string; count: number; amount: number }[];
 }
+/** 店舗別の売上サマリ(期間内) */
+export interface ShopSalesSummary {
+  from: number;
+  to: number;
+  shop: SalesRow & { status: ShopStatus };
+  discounts: SalesReport["discounts"];
+  /** カード/スマホQRそれぞれの件数と支払額 */
+  bySource: { source: "CARD" | "PHONE"; orders: number; paid: number }[];
+}
+/** 店舗の取引履歴の1行 */
+export interface ShopOrderRow {
+  id: string;
+  orderNo: string;
+  paidAt: number;
+  source: "CARD" | "PHONE";
+  subtotal: number;
+  discountTotal: number;
+  totalPaid: number;
+  refundedTotal: number;
+  status: string;
+  items: string | null;
+  clerkNickname: string | null;
+}
 export interface ProductSalesRow {
   name: string;
   kind: "PRODUCT" | "SET";

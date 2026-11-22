@@ -13,6 +13,7 @@ const AdminCash = lazy(() => import("@/pages/admin/AdminCash").then((m) => ({ de
 const AdminRefunds = lazy(() => import("@/pages/admin/AdminRefunds").then((m) => ({ default: m.AdminRefunds })));
 const AdminSales = lazy(() => import("@/pages/admin/AdminSales").then((m) => ({ default: m.AdminSales })));
 const AdminSettings = lazy(() => import("@/pages/admin/AdminSettings").then((m) => ({ default: m.AdminSettings })));
+const AdminShopDetail = lazy(() => import("@/pages/admin/AdminShopDetail").then((m) => ({ default: m.AdminShopDetail })));
 const AdminShops = lazy(() => import("@/pages/admin/AdminShops").then((m) => ({ default: m.AdminShops })));
 const AdminUsers = lazy(() => import("@/pages/admin/AdminUsers").then((m) => ({ default: m.AdminUsers })));
 const AuditLog = lazy(() => import("@/pages/admin/AuditLog").then((m) => ({ default: m.AuditLog })));
@@ -132,6 +133,14 @@ export default function App() {
                 }
               >
                 <Route index element={<AdminSales />} />
+                <Route
+                  path="shops/:shopId"
+                  element={
+                    <Page width="lg">
+                      <AdminShopDetail />
+                    </Page>
+                  }
+                />
                 <Route
                   path="shops"
                   element={

@@ -13,7 +13,7 @@ const TimeSeriesChart = lazy(() => import("@/components/SalesCharts").then((m) =
 const ProductChart = lazy(() => import("@/components/SalesCharts").then((m) => ({ default: m.ProductChart })));
 
 /** 店舗の商品別売上と注文CSV(店舗責任者は自店舗、全体管理者は店舗を選んで) */
-export function ShopSales({ shopId, period: fixedPeriod }: { shopId: string; period?: Period }) {
+export function ShopSales({ shopId, period: fixedPeriod, hideSummary }: { shopId: string; period?: Period; hideSummary?: boolean }) {
   const { money } = useAuth();
   const [ownPeriod, setPeriod] = useState<Period>({});
   // 全体管理者の売上画面から開くときは、そちらで選んだ期間を使う(ここでは選ばせない)
@@ -32,7 +32,7 @@ export function ShopSales({ shopId, period: fixedPeriod }: { shopId: string; per
     <div className="flex flex-col gap-4">
       {!fixedPeriod && <PeriodPicker onChange={setPeriod} />}
       <ErrorText message={error} />
-      {rows && (
+      {rows && !hideSummary && (
         <div className="grid gap-3 sm:grid-cols-2">
           <Card className="p-4">
             <p className="text-xs text-muted-foreground">売上(支払額)</p>
