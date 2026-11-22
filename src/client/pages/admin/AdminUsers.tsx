@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useAction } from "@/lib/useAction";
 import { formatDateTime } from "@/lib/utils";
-import { useConfirm } from "@/lib/confirm";
+import { useConfirm, useNotify, usePrompt } from "@/lib/confirm";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const FILTERS: { id: Role | "ALL"; label: string }[] = [
@@ -25,6 +25,8 @@ const FILTERS: { id: Role | "ALL"; label: string }[] = [
 
 export function AdminUsers() {
   const confirm = useConfirm();
+  const prompt = usePrompt();
+  const notify = useNotify();
   const [users, setUsers] = useState<UserDto[]>([]);
   const [shops, setShops] = useState<ShopDto[]>([]);
   const [filter, setFilter] = useState<Role | "ALL">("ALL");
@@ -69,29 +71,44 @@ export function AdminUsers() {
 
   // --- 受付担当者の登録 ---
   const [rNick, setRNick] = useState("");
+  const [rLogin, setRLogin] = useState("");
+  const [rPass, setRPass] = useState("");
   const reception = useAction();
   const submitReception = (e: FormEvent) => {
     e.preventDefault();
     void reception.run(async () => {
       const issued = await api<ReceptionQrIssued>("/admin/users/reception", {
-        body: { nickname: rNick },
+        body: { nickname: rNick, ...(rLogin ? { loginId: rLogin, password: rPass } : {}) },
       });
       setQr({ issued, nickname: rNick });
       setRNick("");
+      setRLogin("");
+      setRPass("");
       await load();
     });
   };
 
   // --- 行操作 ---
   const row = useAction();
-  const resetPassword = (u: UserDto) => {
-    const pw = window.prompt(`${u.nickname} さんの新しいパスワード(8文字以上)`);
+  const resetPassword = async (u: UserDto) => {
+    const pw = await prompt(`${u.nickname} さんの新しいパスワード(8文字以上)`, { title: "パスワード再設定", required: true, action: "変更する" });
     if (!pw) return;
     void row.run(async () => {
       await api(`/admin/users/${u.id}/reset-password`, {
         body: { password: pw },
       });
-      window.alert("パスワードを変更しました。本人に伝えてください");
+      await notify("パスワードを変更しました。本人に伝えてください");
+    });
+  };
+  const setCredentials = async (u: UserDto) => {
+    const loginId = await prompt(`${u.nickname} さんのログインID(英数字と . _ @ + - )`, { title: "ログインIDの設定", defaultValue: u.loginId ?? "", required: true, action: "次へ" });
+    if (!loginId) return;
+    const password = await prompt("パスワード(8文字以上)", { title: "パスワードの設定", required: true, action: "設定する" });
+    if (!password) return;
+    void row.run(async () => {
+      await api(`/admin/users/${u.id}/reception-credentials`, { body: { loginId: loginId.trim(), password } });
+      await load();
+      await notify("設定しました。ログイン中の端末はログアウトされます。本人にIDとパスワードを伝えてください");
     });
   };
   const toggle = async (u: UserDto) => {
@@ -124,8 +141,8 @@ export function AdminUsers() {
       await load();
     });
   };
-  const revokeQr = (u: UserDto) => {
-    const reason = window.prompt(`${u.nickname} さんのログインQRを失効します。理由を入力してください(例: 紛失)`);
+  const revokeQr = async (u: UserDto) => {
+    const reason = await prompt(`${u.nickname} さんのログインQRを失効します。理由を入力してください(例: 紛失)`, { title: "ログインQRの失効", required: true, action: "失効する" });
     if (!reason) return;
     void row.run(async () => {
       await api(`/admin/users/${u.id}/reception-qr/revoke`, {
@@ -192,6 +209,14 @@ export function AdminUsers() {
               <Field label="表示名">
                 <Input value={rNick} onChange={(e) => setRNick(e.target.value)} maxLength={20} required />
               </Field>
+              <Field label="ログインID(任意)" hint="入力すると、QRのほかにID・パスワードでもログインできます">
+                <Input value={rLogin} onChange={(e) => setRLogin(e.target.value)} autoCapitalize="none" />
+              </Field>
+              {rLogin && (
+                <Field label="初期パスワード" hint="8文字以上">
+                  <Input value={rPass} onChange={(e) => setRPass(e.target.value)} minLength={8} autoComplete="off" required />
+                </Field>
+              )}
               <ErrorText message={reception.error} />
               <Button type="submit" disabled={reception.pending}>
                 登録してQRを発行
@@ -237,13 +262,16 @@ export function AdminUsers() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                {u.role !== "RECEPTION" && (
+                {(u.role !== "RECEPTION" || u.loginId) && (
                   <Button size="sm" variant="outline" onClick={() => resetPassword(u)} disabled={row.pending}>
                     <KeyRound className="!size-4" /> パスワード再設定
                   </Button>
                 )}
                 {u.role === "RECEPTION" && (
                   <>
+                    <Button size="sm" variant="outline" onClick={() => setCredentials(u)} disabled={row.pending}>
+                      <KeyRound className="!size-4" /> {u.loginId ? "ID・パスワード変更" : "ID・パスワード設定"}
+                    </Button>
                     <Button size="sm" variant="outline" onClick={() => reissueQr(u)} disabled={row.pending}>
                       <QrCode className="!size-4" /> QR再発行
                     </Button>

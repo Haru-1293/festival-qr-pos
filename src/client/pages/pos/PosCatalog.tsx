@@ -1,10 +1,10 @@
-import { Ban, Check, CloudOff, ShoppingCart, Tag } from "lucide-react";
+import { Ban, Check, CloudOff, Search, Settings2, Tag } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ProductDto, SetDto } from "@shared/api";
 import { SetPicker } from "@/components/SetPicker";
-import { viewCartLine } from "@/lib/cartView";
 import { PriceView } from "@/components/PriceView";
-import { ErrorText, Shell } from "@/components/Shell";
+import { ErrorText } from "@/components/Shell";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,6 +15,7 @@ import { useCart } from "@/lib/useCart";
 import { useCatalog } from "@/lib/useCatalog";
 import { cn } from "@/lib/utils";
 import { Checkout } from "./Checkout";
+import { CartBar, CartPanel, cartTotals } from "./CartPanel";
 
 function hm(ms: number) {
   return new Date(ms).toLocaleTimeString("ja-JP", {
@@ -23,8 +24,11 @@ function hm(ms: number) {
   });
 }
 
-/** 店員のレジ画面(商品一覧)。会計・決済は次の更新で追加。値下げ・売り切れはリアルタイムに反映される */
-export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: string; shopName: string; embedded?: boolean }) {
+/**
+ * レジ画面(店員・店舗責任者)。商品をタップしてカートに入れ、会計へ進む。
+ * カートの点数・金額は画面上部に常に出る(広い画面では右にカート欄)。値下げ・売り切れはリアルタイムに反映される
+ */
+export function PosCatalog({ shopId }: { shopId: string }) {
   const { money } = useAuth();
   const { catalog, offline, refresh } = useCatalog(shopId);
   const [tag, setTag] = useState<string | null>(null);
@@ -34,6 +38,8 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
   const { cart, add, change, remove, clear } = useCart(shopId);
   const [picking, setPicking] = useState<SetDto | null>(null);
   const [checkout, setCheckout] = useState(false);
+  const [query, setQuery] = useState("");
+  const [manage, setManage] = useState(false);
 
   // 価格・売り切れが変わったら、画面上部に知らせる(最初の読み込みでは出さない)
   const prev = useRef<Map<string, string>>(new Map());
@@ -63,7 +69,10 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
     catalog?.products.forEach((p) => p.tags.forEach((t) => m.set(t.id, t.name)));
     return [...m.entries()];
   }, [catalog]);
-  const items = useMemo(() => (catalog?.products ?? []).filter((p) => !tag || p.tags.some((t) => t.id === tag)), [catalog, tag]);
+  const items = useMemo(
+    () => (catalog?.products ?? []).filter((p) => (!tag || p.tags.some((t) => t.id === tag)) && (!query || p.name.includes(query))),
+    [catalog, tag, query],
+  );
 
   const setSoldOut = (p: ProductDto, soldOut: boolean) => {
     void toggle.run(async () => {
@@ -81,11 +90,11 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
     });
   };
 
-  const count = cart.reduce((a, l) => a + l.quantity, 0);
-  const total = cart.reduce((sum, l) => sum + viewCartLine(l, catalog?.products ?? [], catalog?.sets ?? []).unit * l.quantity, 0);
+  const { count, total } = cartTotals(cart, catalog?.products ?? [], catalog?.sets ?? []);
   const inCart = (id: string) => cart.filter((l) => l.productId === id || l.setId === id).reduce((a, l) => a + l.quantity, 0);
 
   const body = checkout ? (
+    <div className="mx-auto w-full max-w-xl">
     <Checkout
       shopId={shopId}
       products={catalog?.products ?? []}
@@ -100,8 +109,10 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
         void refresh();
       }}
     />
+    </div>
   ) : (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+    <div className="flex min-w-0 flex-1 flex-col gap-3">
       {offline && (
         <div role="status" className="flex items-center gap-2 rounded-xl bg-amber-100 px-3 py-2 text-sm font-medium text-amber-900">
           <CloudOff className="size-4 shrink-0" /> 通信できません。表示中の価格は最新でない可能性があります
@@ -123,6 +134,16 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
       )}
       <ErrorText message={toggle.error} />
 
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="商品名で探す" className="h-10 pl-9 text-sm" aria-label="商品名で探す" />
+        </div>
+        <Button variant={manage ? "default" : "outline"} size="sm" className="h-10" onClick={() => setManage(!manage)} aria-pressed={manage}>
+          <Settings2 className="!size-4" /> 売り切れ操作
+        </Button>
+      </div>
+
       {tags.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-1">
           {[[null, "すべて"] as const, ...tags].map(([id, name]) => (
@@ -142,7 +163,7 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
       {(catalog?.sets.length ?? 0) > 0 && (
         <section aria-label="セット" className="flex flex-col gap-2">
           <p className="text-sm font-bold text-muted-foreground">セット</p>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-5">
             {catalog!.sets.map((st) => (
               <Card key={st.id} className={cn("flex flex-col gap-2 p-3", !st.available && "opacity-60")}>
                 <button
@@ -165,7 +186,7 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
                   {!st.available && <Badge variant="destructive">{st.unavailableReason === "NO_OPTIONS" ? "売り切れ(内訳なし)" : "売り切れ"}</Badge>}
                   {st.segments.some((g) => g.items.some((i) => i.surcharge > 0)) && <Badge variant="muted">追加料金あり</Badge>}
                 </div>
-                {st.manualSoldOut ? (
+                {manage && (st.manualSoldOut ? (
                   <Button size="sm" variant="outline" onClick={() => setSetSoldOut(st, false)} disabled={toggle.pending}>
                     <Check className="!size-4" /> 販売再開
                   </Button>
@@ -173,14 +194,14 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
                   <Button size="sm" variant="outline" onClick={() => setSetSoldOut(st, true)} disabled={toggle.pending || !st.available}>
                     <Ban className="!size-4" /> 売り切れにする
                   </Button>
-                )}
+                ))}
               </Card>
             ))}
           </div>
           <p className="text-sm font-bold text-muted-foreground">単品</p>
         </section>
       )}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-5">
         {items.map((p) => (
           <Card key={p.id} className={cn("flex flex-col gap-2 p-3", p.soldOut && "opacity-60")}>
             <button
@@ -198,9 +219,9 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
             </button>
             <div className="flex flex-wrap items-center gap-1.5">
               {p.soldOut && <Badge variant="destructive">{p.soldOutReason === "STOCK" ? "売り切れ(在庫なし)" : "売り切れ"}</Badge>}
-              {!p.soldOut && p.trackStock && p.stockQty !== null && p.stockQty <= 5 && <Badge variant="warning">残り{p.stockQty}</Badge>}
+              {!p.soldOut && p.trackStock && p.stockQty !== null && <Badge variant={p.stockQty <= 5 ? "warning" : "muted"}>残り{p.stockQty}</Badge>}
             </div>
-            {p.manualSoldOut ? (
+            {manage && (p.manualSoldOut ? (
               <Button size="sm" variant="outline" onClick={() => setSoldOut(p, false)} disabled={toggle.pending}>
                 <Check className="!size-4" /> 販売再開
               </Button>
@@ -208,7 +229,7 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
               <Button size="sm" variant="outline" onClick={() => setSoldOut(p, true)} disabled={toggle.pending || p.soldOut}>
                 <Ban className="!size-4" /> 売り切れにする
               </Button>
-            )}
+            ))}
           </Card>
         ))}
       </div>
@@ -222,17 +243,16 @@ export function PosCatalog({ shopId, shopName, embedded = false }: { shopId: str
           }}
         />
       )}
-      {count > 0 && (
-        <div className="sticky bottom-0 -mx-4 border-t border-border bg-background px-4 py-3">
-          <Button size="lg" className="w-full justify-between" onClick={() => setCheckout(true)}>
-            <span className="flex items-center gap-2">
-              <ShoppingCart /> カート {count}点
-            </span>
-            <span>{money(total)}</span>
-          </Button>
-        </div>
-      )}
+    </div>
+    <aside className="hidden w-96 shrink-0 lg:sticky lg:top-20 lg:block">
+      <CartPanel cart={cart} products={catalog?.products ?? []} sets={catalog?.sets ?? []} onChange={change} onRemove={remove} onClear={clear} onCheckout={() => setCheckout(true)} />
+    </aside>
     </div>
   );
-  return embedded ? body : <Shell title={shopName || "レジ"}>{body}</Shell>;
+  return (
+    <>
+      {!checkout && <CartBar count={count} total={total} onCheckout={() => setCheckout(true)} className="lg:hidden" />}
+      <div className="pt-3">{body}</div>
+    </>
+  );
 }

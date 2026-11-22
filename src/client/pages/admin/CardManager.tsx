@@ -15,6 +15,7 @@ import { useAction } from "@/lib/useAction";
 import { cn, formatDateTime } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/date-picker";
 
 const DAY = 24 * 60 * 60 * 1000;
 const toDateInput = (ms: number) => {
@@ -118,7 +119,7 @@ function IssueCards() {
               <Input value={memo} onChange={(e) => setMemo(e.target.value)} maxLength={200} />
             </Field>
             <Field label="有効期限(発行から6か月以内)">
-              <Input type="date" value={expiry} min={toDateInput(Date.now() + DAY)} max={toDateInput(Date.now() + 183 * DAY)} onChange={(e) => setExpiry(e.target.value)} required />
+              <DatePicker value={expiry} min={toDateInput(Date.now() + DAY)} max={toDateInput(Date.now() + 183 * DAY)} onChange={setExpiry} />
             </Field>
             <ErrorText message={act.error} />
             <Button type="submit" disabled={act.pending || !Number(count)}>
@@ -337,7 +338,7 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
               <Input inputMode="numeric" value={pin2} onChange={(e) => setPin2(digits4(e.target.value))} maxLength={4} autoComplete="off" required />
             </Field>
             <Field label="有効期限(6か月以内)">
-              <Input type="date" value={expiry} min={toDateInput(Date.now() + DAY)} max={toDateInput(Date.now() + 183 * DAY)} onChange={(e) => setExpiry(e.target.value)} required />
+              <DatePicker value={expiry} min={toDateInput(Date.now() + DAY)} max={toDateInput(Date.now() + 183 * DAY)} onChange={setExpiry} />
             </Field>
             <Field label="メモ(任意)">
               <Input value={memo} onChange={(e) => setMemo(e.target.value)} maxLength={200} />

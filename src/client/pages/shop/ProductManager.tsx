@@ -7,11 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 import { cn } from "@/lib/utils";
-import { useConfirm } from "@/lib/confirm";
+import { useConfirm, useNotify, usePrompt } from "@/lib/confirm";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -50,6 +51,8 @@ const digits = (s: string) => s.replace(/[^0-9]/g, "");
 /** 店舗責任者の商品管理。登録・編集・タグ・在庫・アーカイブ。変更はレジ画面へすぐ反映される */
 export function ProductManager({ shopId }: { shopId: string }) {
   const confirm = useConfirm();
+  const prompt = usePrompt();
+  const notify = useNotify();
   const { money } = useAuth();
   const [products, setProducts] = useState<ProductDto[]>([]);
   const [tags, setTags] = useState<TagDto[]>([]);
@@ -117,12 +120,27 @@ export function ProductManager({ shopId }: { shopId: string }) {
     });
   };
 
-  const adjustStock = (p: ProductDto) => {
-    const v = window.prompt(`${p.name} の残数は ${p.stockQty} です。増減を入力してください(例: 追加は 10、廃棄は -3)`);
+  // 数量管理のオン・オフ(あとから切り替えられる)。オンにするときは準備数量を入力する
+  const setTrackStock = async (p: ProductDto, on: boolean) => {
+    let qty: number | undefined;
+    if (on) {
+      const v = await prompt(`${p.name} の準備数量(いまある数)を入力してください`, { title: "数量管理をオンにする", inputType: "number", required: true, action: "オンにする" });
+      if (v === null) return;
+      qty = Number(v);
+      if (!Number.isInteger(qty) || qty < 0) return void (await notify("0以上の整数で入力してください", "入力を確認してください"));
+    } else if (!(await confirm(`${p.name} の数量管理をやめますか?\n残数の計算をやめ、売り切れは手動で切り替えるようになります。`, { destructive: true, action: "やめる" }))) return;
+    void row.run(async () => {
+      await api(`/catalog/${shopId}/products/${p.id}/stock-mode`, { body: { trackStock: on, ...(qty !== undefined ? { stockQty: qty } : {}) } });
+      await load();
+    });
+  };
+
+  const adjustStock = async (p: ProductDto) => {
+    const v = await prompt(`${p.name} の残数は ${p.stockQty} です。増減を入力してください(例: 追加は 10、廃棄は -3)`, { title: "在庫を増減する", placeholder: "10 / -3", action: "次へ" });
     if (v === null || v.trim() === "") return;
     const delta = Number(v);
-    if (!Number.isInteger(delta) || delta === 0) return void window.alert("0以外の整数で入力してください");
-    const note = window.prompt("理由(任意。例: 追加で仕込んだ / 落とした)") ?? undefined;
+    if (!Number.isInteger(delta) || delta === 0) return void (await notify("0以外の整数で入力してください", "入力を確認してください"));
+    const note = (await prompt("理由(任意。例: 追加で仕込んだ / 落とした)", { title: "理由", action: "記録する" })) ?? undefined;
     void row.run(async () => {
       await api(`/catalog/${shopId}/products/${p.id}/stock`, {
         body: {
@@ -227,7 +245,7 @@ export function ProductManager({ shopId }: { shopId: string }) {
                 <>
                   <label className="flex items-center gap-2 text-sm font-medium">
                     <Checkbox checked={draft.trackStock} onCheckedChange={(c) => setDraft({ ...draft, trackStock: c === true })} />
-                    数量を管理する(売れた数だけ残数が減り、0で自動的に売り切れ)
+                    数量を管理する(売れた数だけ残数が減り、0で自動的に売り切れ。登録のあとからでもオン・オフできます)
                   </label>
                   {draft.trackStock && (
                     <Field label="準備数量">
@@ -332,6 +350,10 @@ export function ProductManager({ shopId }: { shopId: string }) {
                   <Button size="sm" variant="outline" onClick={() => edit(p)} disabled={row.pending}>
                     <Pencil className="!size-4" /> 編集
                   </Button>
+                  <label className="flex h-9 items-center gap-2 rounded-lg border border-input bg-card px-3 text-sm font-semibold">
+                    <Switch checked={p.trackStock} onCheckedChange={(c) => void setTrackStock(p, c)} disabled={row.pending} aria-label="数量を管理する" className="h-6 w-10 [&>span]:size-5 [&>span]:data-[state=checked]:translate-x-4" />
+                    数量管理
+                  </label>
                   {p.trackStock && (
                     <Button size="sm" variant="outline" onClick={() => adjustStock(p)} disabled={row.pending}>
                       <Warehouse className="!size-4" /> 在庫を増減

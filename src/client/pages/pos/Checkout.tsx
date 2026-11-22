@@ -265,6 +265,12 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
             <p className="text-lg font-extrabold">お支払いが完了しました</p>
             <p className="text-3xl font-extrabold tracking-tight">{money(result.total)}</p>
             <p className="text-sm text-secondary-foreground">残高 {money(result.balanceAfter)}</p>
+            {result.callNo !== null && (
+              <div className="mt-2 rounded-2xl bg-white px-8 py-3">
+                <p className="text-xs text-muted-foreground">呼び出し番号</p>
+                <p className="text-6xl font-black leading-none">{result.callNo}</p>
+              </div>
+            )}
           </div>
           <CardContent className="flex flex-col gap-1 pt-3 text-sm">
             {result.lines.map((l, i) => (

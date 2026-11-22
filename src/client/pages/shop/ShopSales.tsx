@@ -1,5 +1,5 @@
 import { Download } from "lucide-react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import type { ProductSalesRow } from "@shared/api";
 import { PeriodPicker, periodQuery, type Period } from "@/components/PeriodPicker";
 import { ErrorText } from "@/components/Shell";
@@ -8,6 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { api, errorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+
+const TimeSeriesChart = lazy(() => import("@/components/SalesCharts").then((m) => ({ default: m.TimeSeriesChart })));
+const ProductChart = lazy(() => import("@/components/SalesCharts").then((m) => ({ default: m.ProductChart })));
 
 /** 店舗の商品別売上と注文CSV(店舗責任者は自店舗、全体管理者は店舗を選んで) */
 export function ShopSales({ shopId, period: fixedPeriod }: { shopId: string; period?: Period }) {
@@ -29,6 +32,24 @@ export function ShopSales({ shopId, period: fixedPeriod }: { shopId: string; per
     <div className="flex flex-col gap-4">
       {!fixedPeriod && <PeriodPicker onChange={setPeriod} />}
       <ErrorText message={error} />
+      {rows && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Card className="p-4">
+            <p className="text-xs text-muted-foreground">売上(支払額)</p>
+            <p className="text-3xl font-extrabold">{money(paid)}</p>
+          </Card>
+          <Card className="p-4">
+            <p className="text-xs text-muted-foreground">売れた数</p>
+            <p className="text-3xl font-extrabold">{qty}<span className="ml-1 text-base font-medium">個</span></p>
+          </Card>
+        </div>
+      )}
+      <Suspense fallback={<p className="p-6 text-center text-sm text-muted-foreground">グラフを読み込み中…</p>}>
+        <div className="grid gap-4 xl:grid-cols-2">
+          <TimeSeriesChart shopId={shopId} period={period} />
+          {rows && <ProductChart rows={rows} />}
+        </div>
+      </Suspense>
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center justify-between gap-2">

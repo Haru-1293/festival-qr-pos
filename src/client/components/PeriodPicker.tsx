@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 
 export interface Period {
   from?: number;
@@ -24,14 +24,14 @@ export function PeriodPicker({ onChange }: { onChange: (p: Period) => void }) {
   };
   return (
     <div className="flex flex-wrap items-end gap-2">
-      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+      <div className="flex flex-col gap-1 text-xs text-muted-foreground">
         開始日
-        <Input type="date" value={from} onChange={(e) => apply(e.target.value, to)} className="h-10 w-40" />
-      </label>
-      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+        <DatePicker value={from} onChange={(v) => apply(v, to)} clearable className="h-10 w-44" aria-label="開始日" />
+      </div>
+      <div className="flex flex-col gap-1 text-xs text-muted-foreground">
         終了日
-        <Input type="date" value={to} onChange={(e) => apply(from, e.target.value)} className="h-10 w-40" />
-      </label>
+        <DatePicker value={to} onChange={(v) => apply(from, v)} clearable className="h-10 w-44" aria-label="終了日" />
+      </div>
       <Button type="button" variant="outline" size="sm" onClick={() => apply(todayJst(), todayJst())}>
         今日
       </Button>

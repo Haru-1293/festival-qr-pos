@@ -83,3 +83,14 @@ input {
     background: #fff !important;
   }
 }
+
+/* カレンダー(react-day-picker)をアプリの配色に合わせる */
+.fqp-calendar {
+  --rdp-accent-color: var(--primary);
+  --rdp-accent-background-color: var(--secondary);
+  --rdp-day_button-height: 40px;
+  --rdp-day_button-width: 40px;
+  --rdp-day-height: 40px;
+  --rdp-day-width: 40px;
+  margin: 0;
+}

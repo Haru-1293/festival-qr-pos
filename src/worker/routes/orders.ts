@@ -19,6 +19,8 @@ export const orderRoutes = new Hono<AppEnv>()
     const { shopId } = c.req.valid("param");
     assertShopAccess(auth, shopId);
     const db = c.env.DB;
+    const shop = await db.prepare("SELECT use_order_tracking FROM shops WHERE id = ?").bind(shopId).first<{ use_order_tracking: number }>();
+    if (!shop) throw notFound("店舗が見つかりません");
     const { results } = await db
       .prepare(
         `SELECT t.order_id, t.call_no, t.status, t.created_at, t.updated_at
@@ -46,7 +48,7 @@ export const orderRoutes = new Hono<AppEnv>()
       updatedAt: r.updated_at,
       items: items.get(r.order_id) ?? [],
     }));
-    return c.json({ orders, serverTime: Date.now() });
+    return c.json({ enabled: shop.use_order_tracking === 1, orders, serverTime: Date.now() });
   })
   // 状態の変更。調理中 → 提供可能 → 受け渡し済み(戻すこともできる)
   .post("/:shopId/:orderId/status", orderParam, zValidator("json", z.object({ status: z.enum(["PREPARING", "READY", "DONE"]) })), async (c) => {

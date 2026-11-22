@@ -1,5 +1,5 @@
 import { Download } from "lucide-react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import type { SalesReport } from "@shared/api";
 import { PeriodPicker, periodQuery, type Period } from "@/components/PeriodPicker";
 import { ErrorText } from "@/components/Shell";
@@ -9,6 +9,9 @@ import { api, errorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { ShopSales } from "../shop/ShopSales";
+
+const TimeSeriesChart = lazy(() => import("@/components/SalesCharts").then((m) => ({ default: m.TimeSeriesChart })));
+const ShopShareChart = lazy(() => import("@/components/SalesCharts").then((m) => ({ default: m.ShopShareChart })));
 
 const KIND: Record<string, string> = {
   AUTO: "全ユーザー割引",
@@ -35,6 +38,12 @@ export function AdminSales() {
       <ErrorText message={error} />
       {r && (
         <>
+          <Suspense fallback={<p className="p-6 text-center text-sm text-muted-foreground">グラフを読み込み中…</p>}>
+            <div className="grid gap-4 xl:grid-cols-2">
+              <TimeSeriesChart period={period} />
+              <ShopShareChart shops={r.shops} />
+            </div>
+          </Suspense>
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center justify-between gap-2">

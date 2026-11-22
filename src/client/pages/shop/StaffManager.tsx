@@ -8,18 +8,22 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { useAction } from "@/lib/useAction";
 import { formatDateTime } from "@/lib/utils";
-import { useConfirm } from "@/lib/confirm";
+import { useConfirm, useNotify, usePrompt } from "@/lib/confirm";
 
 /** 店舗のスタッフ管理。店舗責任者は自店舗の店員を登録・パスワード再設定・停止できる */
 export function StaffManager({ shopId }: { shopId: string }) {
   const confirm = useConfirm();
+  const prompt = usePrompt();
+  const notify = useNotify();
   const [staff, setStaff] = useState<UserDto[]>([]);
   const [loginId, setLoginId] = useState("");
   const [nickname, setNickname] = useState("");
   const [password, setPassword] = useState("");
+  const [role, setRole] = useState<"CLERK" | "SHOP_MANAGER">("CLERK");
   const [qr, setQr] = useState<{
     issued: ReceptionQrIssued;
     nickname: string;
@@ -40,7 +44,7 @@ export function StaffManager({ shopId }: { shopId: string }) {
     e.preventDefault();
     void create.run(async () => {
       await api(`/shops/${shopId}/staff`, {
-        body: { loginId, password, nickname },
+        body: { loginId, password, nickname, role },
       });
       setLoginId("");
       setNickname("");
@@ -49,19 +53,19 @@ export function StaffManager({ shopId }: { shopId: string }) {
     });
   };
 
-  const resetPassword = (u: UserDto) => {
-    const pw = window.prompt(`${u.nickname} さんの新しいパスワード(8文字以上)`);
+  const resetPassword = async (u: UserDto) => {
+    const pw = await prompt(`${u.nickname} さんの新しいパスワード(8文字以上)`, { title: "パスワード再設定", required: true, action: "変更する" });
     if (!pw) return;
     void row.run(async () => {
       await api(`/shops/${shopId}/staff/${u.id}/reset-password`, {
         body: { password: pw },
       });
-      window.alert("パスワードを変更しました");
+      await notify("パスワードを変更しました。本人に伝えてください");
     });
   };
 
-  const changeLoginId = (u: UserDto) => {
-    const next = window.prompt(`${u.nickname} さんの新しいログインID(いまのIDでは入れなくなり、ログイン中の端末はログアウトされます)`, u.loginId ?? "");
+  const changeLoginId = async (u: UserDto) => {
+    const next = await prompt(`${u.nickname} さんの新しいログインID(いまのIDでは入れなくなり、ログイン中の端末はログアウトされます)`, { title: "ログインIDの変更", defaultValue: u.loginId ?? "", required: true, action: "変更する" });
     if (!next || next === u.loginId) return;
     void row.run(async () => {
       await api(`/shops/${shopId}/staff/${u.id}/login-id`, {
@@ -89,8 +93,8 @@ export function StaffManager({ shopId }: { shopId: string }) {
     });
   };
 
-  const revokeQr = (u: UserDto) => {
-    const reason = window.prompt(`${u.nickname} さんのログインQRを失効します。理由を入力してください(例: 紛失)`);
+  const revokeQr = async (u: UserDto) => {
+    const reason = await prompt(`${u.nickname} さんのログインQRを失効します。理由を入力してください(例: 紛失)`, { title: "ログインQRの失効", required: true, action: "失効する" });
     if (!reason) return;
     void row.run(async () => {
       await api(`/shops/${shopId}/staff/${u.id}/qr/revoke`, {
@@ -124,11 +128,22 @@ export function StaffManager({ shopId }: { shopId: string }) {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <UserPlus className="size-5" /> 店員を登録
+            <UserPlus className="size-5" /> スタッフを登録
           </CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} className="flex flex-col gap-3">
+            <Field label="役割" hint="店舗責任者は商品・売上・スタッフの管理ができます(複数人登録できます)">
+              <Select value={role} onValueChange={(v) => setRole(v as "CLERK" | "SHOP_MANAGER")}>
+                <SelectTrigger aria-label="役割">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="CLERK">店員(レジ)</SelectItem>
+                  <SelectItem value="SHOP_MANAGER">店舗責任者</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
             <Field label="表示名">
               <Input value={nickname} onChange={(e) => setNickname(e.target.value)} maxLength={20} required />
             </Field>

@@ -14,6 +14,7 @@ import { useAction } from "@/lib/useAction";
 import { formatDateTime } from "@/lib/utils";
 import { useConfirm } from "@/lib/confirm";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DateTimePicker } from "@/components/ui/date-picker";
 
 const STATE_LABEL: Record<PriceCutState, string> = {
   RUNNING: "実施中",
@@ -129,10 +130,10 @@ export function PriceCutManager({ shopId }: { shopId: string }) {
                 <Input inputMode="numeric" value={value} onChange={(e) => setValue(digits(e.target.value))} required className="h-12 text-lg font-bold" />
               </Field>
               <Field label="開始(空欄なら設定した時点から)">
-                <Input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+                <DateTimePicker value={startsAt} onChange={setStartsAt} />
               </Field>
               <Field label="終了(空欄なら手動で止めるまで)">
-                <Input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} />
+                <DateTimePicker value={endsAt} onChange={setEndsAt} />
               </Field>
               <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
                 「値下げ対象外」にした商品は下がりません。端数は値下げ額を切り捨てます。全体管理者の割引・クーポンとは併用でき、値下げ後の価格に適用されます。

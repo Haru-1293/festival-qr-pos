@@ -13,6 +13,7 @@ import { formatDateTime } from "@/lib/utils";
 import { useConfirm } from "@/lib/confirm";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import { DateTimePicker } from "@/components/ui/date-picker";
 
 const STATE_LABEL: Record<string, string> = {
   RUNNING: "有効",
@@ -83,10 +84,10 @@ function RuleFields({ f, set, shops }: { f: RuleForm; set: (p: Partial<RuleForm>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <Field label="開始(空欄=すぐ)">
-          <Input type="datetime-local" value={f.startsAt} onChange={(e) => set({ startsAt: e.target.value })} />
+          <DateTimePicker value={f.startsAt} onChange={(v) => set({ startsAt: v })} />
         </Field>
         <Field label="終了(空欄=止めるまで)">
-          <Input type="datetime-local" value={f.endsAt} onChange={(e) => set({ endsAt: e.target.value })} />
+          <DateTimePicker value={f.endsAt} onChange={(v) => set({ endsAt: v })} />
         </Field>
       </div>
       <Field label="対象の店舗" hint="選ばなければ全店舗が対象です">
