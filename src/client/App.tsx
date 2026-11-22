@@ -1,37 +1,37 @@
 import { BarChart3, Banknote, Boxes, Calculator, ChefHat, CreditCard, HandCoins, Layers, Package, Percent, ScrollText, Settings, Store, Tag, Undo2, Users, UsersRound, Wallet } from "lucide-react";
-import type { ReactNode } from "react";
+import { lazy, Suspense, useState, type ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { ConsoleLayout, Page, type NavItem } from "@/components/layout/ConsoleLayout";
 import { RoleGate } from "@/components/layout/RoleGate";
 import { AuthProvider, useAuth } from "@/lib/auth";
 import { ConfirmProvider } from "@/lib/confirm";
 import { useOnline } from "@/lib/useOnline";
-import { AdminCash } from "@/pages/admin/AdminCash";
-import { AdminRefunds } from "@/pages/admin/AdminRefunds";
-import { AdminSales } from "@/pages/admin/AdminSales";
-import { AdminSettings } from "@/pages/admin/AdminSettings";
-import { AdminShops } from "@/pages/admin/AdminShops";
-import { AdminUsers } from "@/pages/admin/AdminUsers";
-import { AuditLog } from "@/pages/admin/AuditLog";
-import { CardManager } from "@/pages/admin/CardManager";
-import { DiscountManager } from "@/pages/admin/DiscountManager";
 import { PortalLoginPage, RegisterPage, SetupPage } from "@/pages/AuthPages";
-import { CallBoardPage } from "@/pages/display/CallBoard";
-import { CustomerHome } from "@/pages/my/CustomerHome";
-import { PosCatalog } from "@/pages/pos/PosCatalog";
 import { LandingPage } from "@/pages/public/Landing";
-import { CashPanel } from "@/pages/reception/CashPanel";
-import { ChargePanel } from "@/pages/reception/ChargePanel";
-import { OrdersBoard } from "@/pages/shop/OrdersBoard";
-import { PriceCutManager } from "@/pages/shop/PriceCutManager";
-import { ProductManager } from "@/pages/shop/ProductManager";
-import { RefundManager } from "@/pages/shop/RefundManager";
-import { SetManager } from "@/pages/shop/SetManager";
-import { ShopSales } from "@/pages/shop/ShopSales";
-import { ShopSettings } from "@/pages/shop/ShopSettings";
-import { StaffManager } from "@/pages/shop/StaffManager";
-import { StockView } from "@/pages/shop/StockView";
-import { useState } from "react";
+
+const AdminCash = lazy(() => import("@/pages/admin/AdminCash").then((m) => ({ default: m.AdminCash })));
+const AdminRefunds = lazy(() => import("@/pages/admin/AdminRefunds").then((m) => ({ default: m.AdminRefunds })));
+const AdminSales = lazy(() => import("@/pages/admin/AdminSales").then((m) => ({ default: m.AdminSales })));
+const AdminSettings = lazy(() => import("@/pages/admin/AdminSettings").then((m) => ({ default: m.AdminSettings })));
+const AdminShops = lazy(() => import("@/pages/admin/AdminShops").then((m) => ({ default: m.AdminShops })));
+const AdminUsers = lazy(() => import("@/pages/admin/AdminUsers").then((m) => ({ default: m.AdminUsers })));
+const AuditLog = lazy(() => import("@/pages/admin/AuditLog").then((m) => ({ default: m.AuditLog })));
+const CardManager = lazy(() => import("@/pages/admin/CardManager").then((m) => ({ default: m.CardManager })));
+const DiscountManager = lazy(() => import("@/pages/admin/DiscountManager").then((m) => ({ default: m.DiscountManager })));
+const CallBoardPage = lazy(() => import("@/pages/display/CallBoard").then((m) => ({ default: m.CallBoardPage })));
+const CustomerHome = lazy(() => import("@/pages/my/CustomerHome").then((m) => ({ default: m.CustomerHome })));
+const PosCatalog = lazy(() => import("@/pages/pos/PosCatalog").then((m) => ({ default: m.PosCatalog })));
+const CashPanel = lazy(() => import("@/pages/reception/CashPanel").then((m) => ({ default: m.CashPanel })));
+const ChargePanel = lazy(() => import("@/pages/reception/ChargePanel").then((m) => ({ default: m.ChargePanel })));
+const OrdersBoard = lazy(() => import("@/pages/shop/OrdersBoard").then((m) => ({ default: m.OrdersBoard })));
+const PriceCutManager = lazy(() => import("@/pages/shop/PriceCutManager").then((m) => ({ default: m.PriceCutManager })));
+const ProductManager = lazy(() => import("@/pages/shop/ProductManager").then((m) => ({ default: m.ProductManager })));
+const RefundManager = lazy(() => import("@/pages/shop/RefundManager").then((m) => ({ default: m.RefundManager })));
+const SetManager = lazy(() => import("@/pages/shop/SetManager").then((m) => ({ default: m.SetManager })));
+const ShopSales = lazy(() => import("@/pages/shop/ShopSales").then((m) => ({ default: m.ShopSales })));
+const ShopSettings = lazy(() => import("@/pages/shop/ShopSettings").then((m) => ({ default: m.ShopSettings })));
+const StaffManager = lazy(() => import("@/pages/shop/StaffManager").then((m) => ({ default: m.StaffManager })));
+const StockView = lazy(() => import("@/pages/shop/StockView").then((m) => ({ default: m.StockView })));
 
 /** 端末が回線に届いていないときの表示(ログイン画面を含むすべての画面の上に出る) */
 function OfflineBanner() {
@@ -104,97 +104,232 @@ export default function App() {
       <ConfirmProvider>
         <BrowserRouter>
           <OfflineBanner />
-          <Routes>
-            {/* 訪問者・お客様 */}
-            <Route path="/" element={<LandingPage />} />
-            <Route path="/login" element={<PortalLoginPage portal="customer" />} />
-            <Route path="/register" element={<RegisterPage />} />
-            <Route path="/setup" element={<SetupPage />} />
-            <Route path="/board/:shopId" element={<CallBoardPage />} />
-            <Route
-              path="/my"
-              element={
-                <RoleGate roles={["CUSTOMER"]} loginPath="/login">
-                  <CustomerHome />
-                </RoleGate>
-              }
-            />
+          <Suspense fallback={<div className="p-8 text-center text-sm text-muted-foreground">読み込み中…</div>}>
+            <Routes>
+              {/* 訪問者・お客様 */}
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/login" element={<PortalLoginPage portal="customer" />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route path="/setup" element={<SetupPage />} />
+              <Route path="/board/:shopId" element={<CallBoardPage />} />
+              <Route
+                path="/my"
+                element={
+                  <RoleGate roles={["CUSTOMER"]} loginPath="/login">
+                    <CustomerHome />
+                  </RoleGate>
+                }
+              />
 
-            {/* 全体管理者 */}
-            <Route path="/admin/login" element={<PortalLoginPage portal="admin" />} />
-            <Route
-              path="/admin"
-              element={
-                <RoleGate roles={["ADMIN"]} loginPath="/admin/login">
-                  <ConsoleLayout nav={ADMIN_NAV} brand="全体管理" />
-                </RoleGate>
-              }
-            >
-              <Route index element={<AdminSales />} />
-              <Route path="shops" element={<Page><AdminShops /></Page>} />
-              <Route path="users" element={<Page width="lg"><AdminUsers /></Page>} />
-              <Route path="cards" element={<Page><CardManager /></Page>} />
-              <Route path="refunds" element={<Page><AdminRefunds /></Page>} />
-              <Route path="discounts" element={<Page><DiscountManager /></Page>} />
-              <Route path="cash" element={<Page><AdminCash /></Page>} />
-              <Route path="audit" element={<Page width="lg"><AuditLog /></Page>} />
-              <Route path="settings" element={<Page><AdminSettings /></Page>} />
-            </Route>
+              {/* 全体管理者 */}
+              <Route path="/admin/login" element={<PortalLoginPage portal="admin" />} />
+              <Route
+                path="/admin"
+                element={
+                  <RoleGate roles={["ADMIN"]} loginPath="/admin/login">
+                    <ConsoleLayout nav={ADMIN_NAV} brand="全体管理" />
+                  </RoleGate>
+                }
+              >
+                <Route index element={<AdminSales />} />
+                <Route
+                  path="shops"
+                  element={
+                    <Page>
+                      <AdminShops />
+                    </Page>
+                  }
+                />
+                <Route
+                  path="users"
+                  element={
+                    <Page width="lg">
+                      <AdminUsers />
+                    </Page>
+                  }
+                />
+                <Route
+                  path="cards"
+                  element={
+                    <Page>
+                      <CardManager />
+                    </Page>
+                  }
+                />
+                <Route
+                  path="refunds"
+                  element={
+                    <Page>
+                      <AdminRefunds />
+                    </Page>
+                  }
+                />
+                <Route
+                  path="discounts"
+                  element={
+                    <Page>
+                      <DiscountManager />
+                    </Page>
+                  }
+                />
+                <Route
+                  path="cash"
+                  element={
+                    <Page>
+                      <AdminCash />
+                    </Page>
+                  }
+                />
+                <Route
+                  path="audit"
+                  element={
+                    <Page width="lg">
+                      <AuditLog />
+                    </Page>
+                  }
+                />
+                <Route
+                  path="settings"
+                  element={
+                    <Page>
+                      <AdminSettings />
+                    </Page>
+                  }
+                />
+              </Route>
 
-            {/* 店舗責任者(レジも使える) */}
-            <Route path="/shop/login" element={<PortalLoginPage portal="shop" />} />
-            <Route
-              path="/shop"
-              element={
-                <RoleGate roles={["SHOP_MANAGER"]} loginPath="/shop/login">
-                  <ConsoleLayout nav={SHOP_NAV} brand="店舗管理" />
-                </RoleGate>
-              }
-            >
-              <Route index element={<WithShop>{(id) => <ShopSales shopId={id} />}</WithShop>} />
-              <Route path="register" element={<WithShop>{(id) => <PosCatalog shopId={id} />}</WithShop>} />
-              <Route path="orders" element={<WithShop>{(id) => <OrdersBoard shopId={id} />}</WithShop>} />
-              <Route path="products" element={<WithShop>{(id) => <Page><ProductManager shopId={id} /></Page>}</WithShop>} />
-              <Route path="sets" element={<WithShop>{(id) => <Page><SetManager shopId={id} /></Page>}</WithShop>} />
-              <Route path="price-cuts" element={<WithShop>{(id) => <Page><PriceCutManager shopId={id} /></Page>}</WithShop>} />
-              <Route path="refunds" element={<WithShop>{(id) => <Page><RefundManager shopId={id} /></Page>}</WithShop>} />
-              <Route path="staff" element={<WithShop>{(id) => <Page><StaffManager shopId={id} /></Page>}</WithShop>} />
-              <Route path="settings" element={<WithShop>{(id) => <Page><ShopSettings shopId={id} /></Page>}</WithShop>} />
-            </Route>
+              {/* 店舗責任者(レジも使える) */}
+              <Route path="/shop/login" element={<PortalLoginPage portal="shop" />} />
+              <Route
+                path="/shop"
+                element={
+                  <RoleGate roles={["SHOP_MANAGER"]} loginPath="/shop/login">
+                    <ConsoleLayout nav={SHOP_NAV} brand="店舗管理" />
+                  </RoleGate>
+                }
+              >
+                <Route index element={<WithShop>{(id) => <ShopSales shopId={id} />}</WithShop>} />
+                <Route path="register" element={<WithShop>{(id) => <PosCatalog shopId={id} />}</WithShop>} />
+                <Route path="orders" element={<WithShop>{(id) => <OrdersBoard shopId={id} />}</WithShop>} />
+                <Route
+                  path="products"
+                  element={
+                    <WithShop>
+                      {(id) => (
+                        <Page>
+                          <ProductManager shopId={id} />
+                        </Page>
+                      )}
+                    </WithShop>
+                  }
+                />
+                <Route
+                  path="sets"
+                  element={
+                    <WithShop>
+                      {(id) => (
+                        <Page>
+                          <SetManager shopId={id} />
+                        </Page>
+                      )}
+                    </WithShop>
+                  }
+                />
+                <Route
+                  path="price-cuts"
+                  element={
+                    <WithShop>
+                      {(id) => (
+                        <Page>
+                          <PriceCutManager shopId={id} />
+                        </Page>
+                      )}
+                    </WithShop>
+                  }
+                />
+                <Route
+                  path="refunds"
+                  element={
+                    <WithShop>
+                      {(id) => (
+                        <Page>
+                          <RefundManager shopId={id} />
+                        </Page>
+                      )}
+                    </WithShop>
+                  }
+                />
+                <Route
+                  path="staff"
+                  element={
+                    <WithShop>
+                      {(id) => (
+                        <Page>
+                          <StaffManager shopId={id} />
+                        </Page>
+                      )}
+                    </WithShop>
+                  }
+                />
+                <Route
+                  path="settings"
+                  element={
+                    <WithShop>
+                      {(id) => (
+                        <Page>
+                          <ShopSettings shopId={id} />
+                        </Page>
+                      )}
+                    </WithShop>
+                  }
+                />
+              </Route>
 
-            {/* 店員 */}
-            <Route path="/clerk/login" element={<PortalLoginPage portal="clerk" />} />
-            <Route
-              path="/clerk"
-              element={
-                <RoleGate roles={["CLERK"]} loginPath="/clerk/login">
-                  <ConsoleLayout nav={CLERK_NAV} brand="レジ" />
-                </RoleGate>
-              }
-            >
-              <Route index element={<WithShop>{(id) => <PosCatalog shopId={id} />}</WithShop>} />
-              <Route path="orders" element={<WithShop>{(id) => <OrdersBoard shopId={id} />}</WithShop>} />
-              <Route path="stock" element={<WithShop>{(id) => <Page><StockView shopId={id} /></Page>}</WithShop>} />
-            </Route>
+              {/* 店員 */}
+              <Route path="/clerk/login" element={<PortalLoginPage portal="clerk" />} />
+              <Route
+                path="/clerk"
+                element={
+                  <RoleGate roles={["CLERK"]} loginPath="/clerk/login">
+                    <ConsoleLayout nav={CLERK_NAV} brand="レジ" />
+                  </RoleGate>
+                }
+              >
+                <Route index element={<WithShop>{(id) => <PosCatalog shopId={id} />}</WithShop>} />
+                <Route path="orders" element={<WithShop>{(id) => <OrdersBoard shopId={id} />}</WithShop>} />
+                <Route
+                  path="stock"
+                  element={
+                    <WithShop>
+                      {(id) => (
+                        <Page>
+                          <StockView shopId={id} />
+                        </Page>
+                      )}
+                    </WithShop>
+                  }
+                />
+              </Route>
 
-            {/* 受付 */}
-            <Route path="/reception/login" element={<PortalLoginPage portal="reception" />} />
-            <Route
-              path="/reception"
-              element={
-                <RoleGate roles={["RECEPTION"]} loginPath="/reception/login">
-                  <ConsoleLayout nav={RECEPTION_NAV} brand="受付" />
-                </RoleGate>
-              }
-            >
-              <Route path="*" element={<ReceptionPages />} />
-            </Route>
+              {/* 受付 */}
+              <Route path="/reception/login" element={<PortalLoginPage portal="reception" />} />
+              <Route
+                path="/reception"
+                element={
+                  <RoleGate roles={["RECEPTION"]} loginPath="/reception/login">
+                    <ConsoleLayout nav={RECEPTION_NAV} brand="受付" />
+                  </RoleGate>
+                }
+              >
+                <Route path="*" element={<ReceptionPages />} />
+              </Route>
 
-            {/* 旧アドレス */}
-            <Route path="/qr-login" element={<Navigate to="/clerk/login" replace />} />
-            <Route path="/reception-login" element={<Navigate to="/reception/login" replace />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+              {/* 旧アドレス */}
+              <Route path="/qr-login" element={<Navigate to="/clerk/login" replace />} />
+              <Route path="/reception-login" element={<Navigate to="/reception/login" replace />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </Suspense>
         </BrowserRouter>
       </ConfirmProvider>
     </AuthProvider>
