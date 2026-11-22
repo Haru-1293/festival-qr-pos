@@ -1,3 +1,4 @@
+import { walletNotExpiredSql } from "../lib/expiry";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { PaySession, PayStatus, Quote } from "@shared/api";
@@ -181,16 +182,17 @@ export const posRoutes = new Hono<AppEnv>()
       if (isCard) {
         const card = await db
           .prepare(
-            `SELECT c.id, c.status, c.expires_at, c.nickname, c.display_no, c.wallet_id, w.status AS wstatus, w.balance
+            `SELECT c.id, c.status, c.expires_at, c.nickname, c.display_no, c.wallet_id, w.status AS wstatus, w.balance, w.expires_at AS wexpires
                FROM cards c LEFT JOIN wallets w ON w.id = c.wallet_id WHERE c.qr_token_hash = ?`,
           )
           .bind(hash)
-          .first<{ id: string; status: string; expires_at: number | null; nickname: string | null; display_no: string; wallet_id: string | null; wstatus: string | null; balance: number | null }>();
+          .first<{ id: string; status: string; expires_at: number | null; nickname: string | null; display_no: string; wallet_id: string | null; wstatus: string | null; balance: number | null; wexpires: number | null }>();
         if (!card) throw badRequest("このカードは登録されていないか、無効になっています", "INVALID_QR");
         if (card.status === "ISSUED") throw forbidden("このカードはまだ有効化されていません。受付にお問い合わせください", "CARD_INACTIVE");
         if (card.status === "SUSPENDED") throw forbidden("このカードは一時停止中です。受付にお問い合わせください", "CARD_INACTIVE");
         if (card.status !== "ACTIVE") throw forbidden("このカードは使えません", "CARD_INACTIVE");
         if (card.expires_at !== null && card.expires_at <= now) throw forbidden("このカードは有効期限が切れています", "CARD_EXPIRED");
+        if (card.wexpires !== null && card.wexpires <= now) throw forbidden("このカードは有効期限が切れています", "CARD_EXPIRED");
         if (card.wstatus !== "ACTIVE") throw forbidden("このカードのウォレットは現在ご利用できません", "WALLET_INACTIVE");
         await recheck(card.wallet_id!);
         const res = await db.batch([
@@ -219,13 +221,16 @@ export const posRoutes = new Hono<AppEnv>()
       // 持ち主のアカウントが停止中なら、QRを消費せずに断る
       const owner = await db
         .prepare(
-          `SELECT w.id AS wallet_id, w.status AS wstatus, u.status AS ustatus FROM pay_qr_tokens t JOIN wallets w ON w.id = t.wallet_id
+          `SELECT w.id AS wallet_id, w.status AS wstatus, w.expires_at AS wexpires, u.status AS ustatus FROM pay_qr_tokens t JOIN wallets w ON w.id = t.wallet_id
              LEFT JOIN users u ON u.id = w.owner_user_id WHERE t.token_hash = ?`,
         )
         .bind(hash)
-        .first<{ wallet_id: string; wstatus: string; ustatus: string | null }>();
+        .first<{ wallet_id: string; wstatus: string; wexpires: number | null; ustatus: string | null }>();
       if (owner && (owner.wstatus !== "ACTIVE" || (owner.ustatus !== null && owner.ustatus !== "ACTIVE"))) {
         throw forbidden("お客様のご利用が停止されています。受付にお問い合わせください", "WALLET_INACTIVE");
+      }
+      if (owner && owner.wexpires !== null && owner.wexpires <= now) {
+        throw forbidden("お客様のウォレットは有効期限が切れています。受付にお問い合わせください", "WALLET_EXPIRED");
       }
       if (owner) await recheck(owner.wallet_id);
 
@@ -432,7 +437,7 @@ export const posRoutes = new Hono<AppEnv>()
             `UPDATE payment_sessions SET status = 'COMMITTED'
               WHERE id = ? AND shop_id = ? AND status = 'OPEN' AND expires_at >= ?
                 AND EXISTS (SELECT 1 FROM shops WHERE id = ? AND status = 'ACTIVE')
-                AND EXISTS (SELECT 1 FROM wallets w WHERE w.id = payment_sessions.wallet_id AND w.status = 'ACTIVE'
+                AND EXISTS (SELECT 1 FROM wallets w WHERE w.id = payment_sessions.wallet_id AND w.status = 'ACTIVE' AND ${walletNotExpiredSql(now)}
                       AND (w.owner_user_id IS NULL OR EXISTS (SELECT 1 FROM users u WHERE u.id = w.owner_user_id AND u.status = 'ACTIVE')))
                 AND ${cutGuard}
                 AND (payment_sessions.card_id IS NULL OR EXISTS (SELECT 1 FROM cards cd WHERE cd.id = payment_sessions.card_id AND cd.pin_hash = ? AND ${cardUsableSql("cd")}))`,
@@ -567,6 +572,8 @@ export const posRoutes = new Hono<AppEnv>()
         const cur = await db.prepare("SELECT status, order_id FROM payment_sessions WHERE id = ?").bind(sessionId).first<{ status: string; order_id: string | null }>();
         if (cur?.status === "COMMITTED" && cur.order_id) return c.json({ ...(await loadPayResult(db, cur.order_id))!, replayed: true });
         if (cur?.status !== "OPEN") throw conflict("この決済は確定できません。状態を確認してください", "SESSION_DONE");
+        const wexp = await db.prepare("SELECT expires_at FROM wallets WHERE id = ?").bind(s.wallet_id).first<{ expires_at: number | null }>();
+        if (wexp && wexp.expires_at !== null && wexp.expires_at <= now2) throw forbidden("ウォレットの有効期限が切れています。受付にお問い合わせください", "WALLET_EXPIRED");
         if (s.card_id) {
           const still = await db
             .prepare(`SELECT 1 FROM cards c WHERE c.id = ? AND c.pin_hash = ? AND ${cardUsableSql("c")}`)

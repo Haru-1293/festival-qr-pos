@@ -1,7 +1,7 @@
 import { Ban, KeyRound, Play, Printer, QrCode, RefreshCw, ScanLine, Search, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import type { CardDto, CardStatus, IssuedCard } from "@shared/api";
+import type { CardDto, CardStatus, ExpiryPolicy, IssuedCard } from "@shared/api";
 import { QrCodeView } from "@/components/QrCodeView";
 import { QrScanner, scannerSupported } from "@/components/QrScanner";
 import { ErrorText, Field } from "@/components/Shell";
@@ -23,6 +23,17 @@ const toDateInput = (ms: number) => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 /** 入力した日の終わり(23:59:59)を期限にする */
+/** 管理者が設定した既定の有効期限(YYYY-MM-DD)。取得できるまでは180日後 */
+function useDefaultExpiry(): string {
+  const [d, setD] = useState(() => toDateInput(Date.now() + 180 * DAY));
+  useEffect(() => {
+    api<{ expiry: ExpiryPolicy }>("/admin/settings/expiry")
+      .then(({ expiry }) => setD(expiry.mode === "DATE" && expiry.date ? expiry.date : toDateInput(Date.now() + Math.min(expiry.days, 183) * DAY)))
+      .catch(() => undefined);
+  }, []);
+  return d;
+}
+
 const endOfDay = (s: string) => new Date(`${s}T23:59:59`).getTime();
 const randomPin = () => {
   const a = new Uint32Array(1);
@@ -79,7 +90,9 @@ function IssueCards() {
   const [count, setCount] = useState("10");
   const [batch, setBatch] = useState("");
   const [memo, setMemo] = useState("");
-  const [expiry, setExpiry] = useState(toDateInput(Date.now() + 180 * DAY));
+  const defaultExpiry = useDefaultExpiry();
+  const [expiryEdit, setExpiry] = useState<string | null>(null);
+  const expiry = expiryEdit ?? defaultExpiry;
   const [issued, setIssued] = useState<IssuedCard[] | null>(null);
   const act = useAction();
 
@@ -182,7 +195,9 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
   const [pin, setPin] = useState("");
   const [pin2, setPin2] = useState("");
   const [memo, setMemo] = useState("");
-  const [expiry, setExpiry] = useState("");
+  const defaultExpiry = useDefaultExpiry();
+  const [expiryEdit, setExpiry] = useState<string | null>(null);
+  const expiry = expiryEdit ?? defaultExpiry;
   const [done, setDone] = useState<{ card: CardDto; pin: string } | null>(null);
   const look = useAction();
   const act = useAction();
@@ -194,7 +209,7 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
         body: { token: value.trim() },
       });
       setCard(r.card);
-      setExpiry(toDateInput(r.card.expiresAt ?? Date.now() + 180 * DAY));
+      setExpiry(r.card.expiresAt ? toDateInput(r.card.expiresAt) : null);
       setToken("");
     });
   };

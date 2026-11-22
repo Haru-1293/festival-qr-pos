@@ -1,10 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
-import type { OperationSettings } from "@shared/api";
+import type { ExpiryPolicy, OperationSettings } from "@shared/api";
 import type { CurrencySettings } from "@shared/currency";
 import { formatMoney } from "@shared/currency";
 import { ErrorText, Field } from "@/components/Shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -75,6 +76,8 @@ export function AdminSettings() {
     paymentSessionSeconds: 300,
   });
   const opsAction = useAction();
+  const [expiry, setExpiry] = useState<ExpiryPolicy>({ mode: "DAYS", days: 180, date: null });
+  const expiryAction = useAction();
 
   useEffect(() => {
     api<{ currency: CurrencySettings }>("/admin/settings/currency")
@@ -87,6 +90,20 @@ export function AdminSettings() {
       .then((r) => setOps(r.operations))
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    api<{ expiry: ExpiryPolicy }>("/admin/settings/expiry")
+      .then((r) => setExpiry(r.expiry))
+      .catch(() => undefined);
+  }, []);
+
+  const saveExpiry = (e: FormEvent) => {
+    e.preventDefault();
+    void expiryAction.run(async () => {
+      await api("/admin/settings/expiry", { method: "PUT", body: expiry });
+      setSaved("有効期限の設定を保存しました");
+    });
+  };
 
   const saveOps = (e: FormEvent) => {
     e.preventDefault();
@@ -213,6 +230,49 @@ export function AdminSettings() {
             </Field>
             <ErrorText message={opsAction.error} />
             <Button type="submit" disabled={opsAction.pending}>
+              保存
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card className="h-fit">
+        <CardHeader>
+          <CardTitle>有効期限</CardTitle>
+          <CardDescription>
+            新しく発行するカードと、新規登録するお客様のウォレットの有効期限です。発行済みのものは変わりません。前払式支払手段の特例により、今日から184日(6か月)以内に限ります。
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={saveExpiry} className="flex flex-col gap-3">
+            <Field label="決め方">
+              <Select value={expiry.mode} onValueChange={(v) => setExpiry({ ...expiry, mode: v as ExpiryPolicy["mode"] })}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="DAYS">発行・登録から一定の日数</SelectItem>
+                  <SelectItem value="DATE">全員同じ日付(固定日)</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            {expiry.mode === "DAYS" ? (
+              <Field label="日数" hint="1〜184日。既定は180日">
+                <Input type="number" min={1} max={184} value={expiry.days} onChange={(e) => setExpiry({ ...expiry, days: Number(e.target.value) })} required />
+              </Field>
+            ) : (
+              <Field label="有効期限の日付" hint="その日の23:59まで使えます(日本時間)">
+                <DatePicker
+                  value={expiry.date ?? ""}
+                  onChange={(v) => setExpiry({ ...expiry, date: v || null })}
+                  min={new Date().toISOString().slice(0, 10)}
+                  max={new Date(Date.now() + 184 * 86400000).toISOString().slice(0, 10)}
+                />
+              </Field>
+            )}
+            <p className="text-xs text-muted-foreground">期限が切れたウォレットは、支払い・チャージ・QR表示ができなくなります。残りの残高は受付で払戻しできます。</p>
+            <ErrorText message={expiryAction.error} />
+            <Button type="submit" disabled={expiryAction.pending}>
               保存
             </Button>
           </form>

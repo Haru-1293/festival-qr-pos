@@ -16,11 +16,15 @@ export const walletRoutes = new Hono<AppEnv>()
     const auth = requireAuth(c);
     const db = c.env.DB;
     const wallet = await db
-      .prepare("SELECT id, status FROM wallets WHERE owner_user_id = ?")
+      .prepare("SELECT id, status, expires_at FROM wallets WHERE owner_user_id = ?")
       .bind(auth.userId)
-      .first<{ id: string; status: string }>();
+      .first<{ id: string; status: string; expires_at: number | null }>();
     if (!wallet) throw notFound("ウォレットが見つかりません");
     if (wallet.status !== "ACTIVE") throw forbidden("ご利用が停止されています。受付にお問い合わせください", "WALLET_INACTIVE");
+
+    if (wallet.expires_at !== null && wallet.expires_at <= Date.now()) {
+      throw forbidden("ウォレットの有効期限が切れています。残高のお取り扱いは受付にお問い合わせください", "WALLET_EXPIRED");
+    }
 
     const { qrTtlSeconds } = await getOperations(db);
     const token = `${WALLET_QR_PREFIX}${randomToken(24)}`;

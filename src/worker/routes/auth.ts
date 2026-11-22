@@ -8,6 +8,7 @@ import { auditStmt } from "../lib/audit";
 import { hashPassword, sha256Hex, verifyPassword } from "../lib/crypto";
 import { badRequest, conflict, unauthorized } from "../lib/errors";
 import { newId } from "../lib/ids";
+import { DEFAULT_EXPIRY_POLICY, getExpiryPolicy, resolveExpiry } from "../lib/expiry";
 import { buildSessionStmts, clearSessionCookie, deviceLabelFrom, writeSessionCookie } from "../lib/session";
 import { isUniqueViolation } from "../lib/users";
 import { requireAuth } from "../middleware/auth";
@@ -94,6 +95,8 @@ export const authRoutes = new Hono<AppEnv>()
       const userId = newId();
       const now = Date.now();
       const passwordHash = await hashPassword(password);
+      // 管理者が設定した有効期限(固定日が過ぎている等で決まらないときは、期限なしにせず既定の180日)
+      const walletExpiresAt = resolveExpiry(await getExpiryPolicy(db), now) ?? resolveExpiry(DEFAULT_EXPIRY_POLICY, now);
       const session = await buildSessionStmts(db, { id: userId, role: "CUSTOMER" }, deviceLabelFrom(c));
       try {
         await db.batch([
@@ -104,8 +107,8 @@ export const authRoutes = new Hono<AppEnv>()
             )
             .bind(userId, email, passwordHash, nickname, now, userId),
           db
-            .prepare("INSERT INTO wallets (id, owner_user_id, balance, status, created_at) VALUES (?, ?, 0, 'ACTIVE', ?)")
-            .bind(newId(), userId, now),
+            .prepare("INSERT INTO wallets (id, owner_user_id, balance, status, expires_at, created_at) VALUES (?, ?, 0, 'ACTIVE', ?, ?)")
+            .bind(newId(), userId, walletExpiresAt, now),
           auditStmt(db, {
             actor: { userId, role: "CUSTOMER" },
             action: "account.register",

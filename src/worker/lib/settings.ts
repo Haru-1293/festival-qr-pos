@@ -5,6 +5,7 @@ export const SETTING_KEYS = {
   currency: "currency",
   festivalName: "festival.name",
   operations: "operations",
+  expiry: "expiry",
 } as const;
 
 export const DEFAULT_OPERATIONS: OperationSettings = { closingMode: "DAY", qrTtlSeconds: 300, paymentSessionSeconds: 300 };

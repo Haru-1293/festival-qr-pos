@@ -1,3 +1,4 @@
+import { walletNotExpiredSql } from "../lib/expiry";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { CashOpResult, LookupResponse, ReceptionSummary } from "@shared/api";
@@ -87,6 +88,9 @@ async function tryReplay(
 
 const WALLET_ACTIVE_SQL = `w.status = 'ACTIVE'
    AND (w.owner_user_id IS NULL OR EXISTS (SELECT 1 FROM users u WHERE u.id = w.owner_user_id AND u.status = 'ACTIVE'))`;
+
+/** チャージできるウォレット(有効・持ち主が有効・期限内)。払戻しは期限切れでも受け付けるので WALLET_ACTIVE_SQL を使う */
+const walletChargeableSql = (now: number) => `${WALLET_ACTIVE_SQL} AND ${walletNotExpiredSql(now)}`;
 
 const LEDGER_EXISTS_SQL = "SELECT 1 FROM wallet_ledger WHERE id = ?";
 
@@ -249,7 +253,7 @@ export const receptionRoutes = new Hono<AppEnv>()
             .prepare(
               `INSERT INTO wallet_ledger (id, wallet_id, kind, amount, balance_after, ref_type, ref_id, operator_user_id, idempotency_key, created_at)
                SELECT ?, w.id, 'CHARGE', ?, w.balance + ?, 'CASH_EVENT', ?, ?, ?, ?
-                 FROM wallets w WHERE w.id = ? AND ${WALLET_ACTIVE_SQL} AND ${cardLookupGuard}`,
+                 FROM wallets w WHERE w.id = ? AND ${walletChargeableSql(Date.now())} AND ${cardLookupGuard}`,
             )
             .bind(ledgerId, units, units, eventId, auth.userId, b.requestId, now, lookup.wallet_id, ...cardGuardArgs(lookup, Date.now())),
           // ② 残高(①ができたときだけ更新)
@@ -282,7 +286,7 @@ export const receptionRoutes = new Hono<AppEnv>()
         throw e;
       }
       const res = await loadLedgerResult(db, ledgerId);
-      if (!res) throw conflict("このウォレットは現在ご利用できません(停止中など)。チャージされていません", "WALLET_INACTIVE");
+      if (!res) throw conflict("このウォレットは現在ご利用できません(停止中・有効期限切れなど)。チャージされていません", "WALLET_INACTIVE");
       return c.json({ ...res.result, replayed: false } satisfies CashOpResult, 201);
     },
   )

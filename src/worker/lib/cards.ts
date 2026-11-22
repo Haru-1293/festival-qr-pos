@@ -2,14 +2,6 @@ import type { CardDto, CardStatus, IssuedCard } from "@shared/api";
 import { randomToken, sha256Hex } from "./crypto";
 import { CARD_QR_PREFIX } from "./qr";
 
-/** 6か月特例の上限(日)。カード・ウォレットの有効期限はこの範囲に収める */
-export const MAX_CARD_VALID_DAYS = 184;
-export const DEFAULT_CARD_VALID_DAYS = 180;
-const DAY = 24 * 60 * 60 * 1000;
-
-export const defaultCardExpiry = (now: number) => now + DEFAULT_CARD_VALID_DAYS * DAY;
-export const maxCardExpiry = (now: number) => now + MAX_CARD_VALID_DAYS * DAY;
-
 /** 使えるカード(有効・期限内)かどうかの SQL 条件。引数: 現在時刻 */
 export const cardUsableSql = (a = "c") => `${a}.status = 'ACTIVE' AND (${a}.expires_at IS NULL OR ${a}.expires_at > ?)`;
 

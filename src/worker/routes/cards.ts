@@ -3,7 +3,8 @@ import { z } from "zod";
 import type { CardDto, IssuedCard } from "@shared/api";
 import type { AppEnv } from "../env";
 import { auditStmt } from "../lib/audit";
-import { CARD_SELECT, type CardRow, cardUsableSql, defaultCardExpiry, maxCardExpiry, newCardToken, toCardDto } from "../lib/cards";
+import { getExpiryPolicy, maxExpiry, resolveExpiry } from "../lib/expiry";
+import { CARD_SELECT, type CardRow, cardUsableSql, newCardToken, toCardDto } from "../lib/cards";
 import { hashPin, sha256Hex } from "../lib/crypto";
 import { badRequest, conflict, notFound } from "../lib/errors";
 import { newId } from "../lib/ids";
@@ -22,10 +23,16 @@ function pepper(env: { PIN_PEPPER?: string }): string {
   return env.PIN_PEPPER;
 }
 
-function checkExpiry(expiresAt: number | undefined, now: number): number {
-  const e = expiresAt ?? defaultCardExpiry(now);
+/** 期限の指定が無ければ、管理者が設定した既定の期限にする。指定があっても6か月特例の上限は超えられない */
+async function checkExpiry(db: D1Database, expiresAt: number | undefined, now: number): Promise<number> {
+  let e = expiresAt;
+  if (e === undefined) {
+    const d = resolveExpiry(await getExpiryPolicy(db), now);
+    if (d === null) throw badRequest("有効期限の設定が過去の日付になっています。管理者に設定の見直しを依頼してください", "EXPIRY_POLICY_INVALID");
+    e = d;
+  }
   if (e <= now) throw badRequest("有効期限は未来の日時にしてください");
-  if (e > maxCardExpiry(now)) throw badRequest("有効期限は6か月(184日)以内にしてください(前払式支払手段の特例)");
+  if (e > maxExpiry(now)) throw badRequest("有効期限は6か月(184日)以内にしてください(前払式支払手段の特例)");
   return e;
 }
 
@@ -78,7 +85,7 @@ export const cardRoutes = new Hono<AppEnv>()
       const b = c.req.valid("json");
       const db = c.env.DB;
       const now = Date.now();
-      const expiresAt = checkExpiry(b.expiresAt, now);
+      const expiresAt = await checkExpiry(c.env.DB, b.expiresAt, now);
       for (let attempt = 0; attempt < 3; attempt++) {
         // カード番号は連番(認証には使わない・再利用しない)。同時発行で重なったら一意制約で弾かれるので、やり直す
         const last = await db.prepare("SELECT COALESCE(MAX(CAST(SUBSTR(display_no, 2) AS INTEGER)), 0) AS n FROM cards").first<{ n: number }>();
@@ -132,7 +139,7 @@ export const cardRoutes = new Hono<AppEnv>()
       const card = await loadCard(db, id);
       if (card.status !== "ISSUED") throw conflict("このカードはすでに有効化されているか、使えない状態です", "CARD_STATE");
       const now = Date.now();
-      const expiresAt = checkExpiry(b.expiresAt ?? card.expires_at ?? undefined, now);
+      const expiresAt = await checkExpiry(c.env.DB, b.expiresAt ?? card.expires_at ?? undefined, now);
       const pinHash = await hashPin(b.pin, pepper(c.env));
       const walletId = newId(now);
       const res = await db.batch([
@@ -272,7 +279,7 @@ export const cardRoutes = new Hono<AppEnv>()
         newCard = await loadCard(db, b.newCardId!);
         if (newCard.status !== "ISSUED") throw conflict("引き継ぎ先は未有効化のカードにしてください", "CARD_STATE");
       }
-      const expiresAt = b.walletAction === "TRANSFER" ? checkExpiry(b.expiresAt ?? card.expires_at ?? undefined, now) : null;
+      const expiresAt = b.walletAction === "TRANSFER" ? await checkExpiry(c.env.DB, b.expiresAt ?? card.expires_at ?? undefined, now) : null;
       const newPinHash = b.walletAction === "TRANSFER" ? await hashPin(b.newPin!, pepper(c.env)) : null;
       const old = await db.prepare("SELECT qr_token_hash FROM cards WHERE id = ?").bind(id).first<{ qr_token_hash: string | null }>();
 

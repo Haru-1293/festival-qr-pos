@@ -138,6 +138,15 @@ export interface ClosingDto {
   closedAt: number;
 }
 
+/** カード・ウォレットの有効期限ポリシー(管理者が設定)。DAYS=発行から日数、DATE=固定日(日本時間の23:59:59まで) */
+export interface ExpiryPolicy {
+  mode: "DAYS" | "DATE";
+  /** mode=DAYS のときの日数(1〜184) */
+  days: number;
+  /** mode=DATE のときの日付 YYYY-MM-DD */
+  date: string | null;
+}
+
 export interface OperationSettings {
   closingMode: ClosingMode;
   qrTtlSeconds: number;

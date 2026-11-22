@@ -1,7 +1,7 @@
 import { zv as zValidator } from "../lib/validate";
 import { Hono } from "hono";
 import { z } from "zod";
-import type { ReceptionQrIssued, ShopDto } from "@shared/api";
+import type { ExpiryPolicy, ReceptionQrIssued, ShopDto } from "@shared/api";
 import { DEFAULT_CURRENCY } from "@shared/currency";
 import { ROLES, SHOP_STATUSES } from "@shared/roles";
 import type { AppEnv } from "../env";
@@ -9,6 +9,7 @@ import { auditStmt } from "../lib/audit";
 import { EMERGENCY_KEY, getEmergency } from "../lib/emergency";
 import { hashPassword } from "../lib/crypto";
 import { badRequest, conflict, notFound } from "../lib/errors";
+import { getExpiryPolicy, validatePolicy } from "../lib/expiry";
 import { newId } from "../lib/ids";
 import { SETTING_KEYS, getCurrency, getOperations, setSettingStmt } from "../lib/settings";
 import { buildReceptionQrIssue, createStaffUser, getUserBasic, isUniqueViolation, listUsers } from "../lib/users";
@@ -339,6 +340,31 @@ export const adminRoutes = new Hono<AppEnv>()
         auditStmt(c.env.DB, { actor: auth, action: "settings.operations", targetType: "settings", targetId: SETTING_KEYS.operations, before, after: next }),
       ]);
       return c.json({ operations: next });
+    },
+  )
+  // 有効期限: 新しく発行・登録するカード/ウォレットの期限(発行からの日数 or 固定日)。すでに発行済みのものは変わらない
+  .get("/settings/expiry", async (c) => c.json({ expiry: await getExpiryPolicy(c.env.DB) }))
+  .put(
+    "/settings/expiry",
+    zValidator(
+      "json",
+      z.object({
+        mode: z.enum(["DAYS", "DATE"]),
+        days: z.number().int().min(1, "日数は1以上にしてください").max(184, "日数は184日(6か月)以内にしてください"),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "日付の形式が正しくありません").nullable(),
+      }),
+    ),
+    async (c) => {
+      const auth = requireAuth(c);
+      const next: ExpiryPolicy = c.req.valid("json");
+      const problem = validatePolicy(next, Date.now());
+      if (problem) throw badRequest(problem);
+      const before = await getExpiryPolicy(c.env.DB);
+      await c.env.DB.batch([
+        setSettingStmt(c.env.DB, SETTING_KEYS.expiry, next, auth.userId),
+        auditStmt(c.env.DB, { actor: auth, action: "settings.expiry", targetType: "settings", targetId: SETTING_KEYS.expiry, before, after: next }),
+      ]);
+      return c.json({ expiry: next });
     },
   )
   .put(
