@@ -5,3 +5,6 @@ export const WALLET_QR_PATTERN = /^FES1:U:[A-Za-z0-9_-]{32}$/;
 /** 物理カードの固定QR。`FES1:C:` + 192ビット乱数(Base64URL 32文字) */
 export const CARD_QR_PREFIX = "FES1:C:";
 export const CARD_QR_PATTERN = /^FES1:C:[A-Za-z0-9_-]{32}$/;
+
+/** クーポンのQR。`FES1:K:` + クーポンコード(英数字とハイフン)。レジで読み取るとコード入力欄に入る */
+export const COUPON_QR_PREFIX = "FES1:K:";

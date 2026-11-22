@@ -50,6 +50,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
   // クーポン: 入力欄の文字(codeInput)と、適用ボタンで確定したコード(coupon)。見積もりはサーバーが計算する
   const [codeInput, setCodeInput] = useState("");
   const [coupon, setCoupon] = useState("");
+  const [couponScan, setCouponScan] = useState(false);
   const [preview, setPreview] = useState<Quote | null>(null);
   const reqId = useRequestId();
   const renewReq = reqId.renew;
@@ -499,7 +500,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
               <Ticket className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={codeInput}
-                onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                onChange={(e) => setCodeInput(e.target.value.toUpperCase().replace(/^FES1:K:/, ""))}
                 placeholder="クーポンコード"
                 autoComplete="off"
                 autoCapitalize="characters"
@@ -507,10 +508,34 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
                 maxLength={40}
               />
             </div>
+            {scannerSupported() && (
+              <Button type="button" variant="outline" size="icon" aria-label="クーポンのQRを読み取る" onClick={() => setCouponScan((v) => !v)} aria-pressed={couponScan}>
+                <ScanLine />
+              </Button>
+            )}
             <Button type="submit" variant="outline" disabled={codeInput.trim() === coupon}>
               {codeInput.trim() === "" && coupon ? "外す" : "適用"}
             </Button>
           </form>
+          {couponScan && (
+            <div className="mt-3">
+              <QrScanner
+                onScan={(v) => {
+                  const t = v.trim();
+                  if (/^FES1:[UC]:/.test(t)) {
+                    setError("これはクーポンのQRではありません(お客様の支払いQRです)");
+                    return;
+                  }
+                  const code = t.toUpperCase().replace(/^FES1:K:/, "");
+                  setError(null);
+                  setCodeInput(code);
+                  setCoupon(code);
+                  setCouponScan(false);
+                }}
+                onClose={() => setCouponScan(false)}
+              />
+            </div>
+          )}
           {coupon && preview?.couponError && <p className="mt-2 text-sm font-semibold text-destructive">{preview.couponError}</p>}
           {coupon && preview && !preview.couponError && preview.discounts.some((d) => d.kind !== "AUTO") && <p className="mt-2 text-sm font-semibold text-primary">クーポンを適用しました</p>}
         </Card>

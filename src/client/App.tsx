@@ -1,4 +1,24 @@
-import { BarChart3, Banknote, Boxes, Calculator, ChefHat, CreditCard, HandCoins, Layers, Package, Percent, ScrollText, Settings, Store, Tag, Undo2, Users, UsersRound, Wallet } from "lucide-react";
+import {
+  BarChart3,
+  Banknote,
+  Boxes,
+  Calculator,
+  ChefHat,
+  CreditCard,
+  HandCoins,
+  Layers,
+  Package,
+  Percent,
+  ScrollText,
+  Settings,
+  Store,
+  Tag,
+  Ticket,
+  Undo2,
+  Users,
+  UsersRound,
+  Wallet,
+} from "lucide-react";
 import { lazy, Suspense, useState, type ReactNode } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { ConsoleLayout, Page, type NavItem } from "@/components/layout/ConsoleLayout";
@@ -29,7 +49,8 @@ const PriceCutManager = lazy(() => import("@/pages/shop/PriceCutManager").then((
 const ProductManager = lazy(() => import("@/pages/shop/ProductManager").then((m) => ({ default: m.ProductManager })));
 const RefundManager = lazy(() => import("@/pages/shop/RefundManager").then((m) => ({ default: m.RefundManager })));
 const SetManager = lazy(() => import("@/pages/shop/SetManager").then((m) => ({ default: m.SetManager })));
-const ShopSales = lazy(() => import("@/pages/shop/ShopSales").then((m) => ({ default: m.ShopSales })));
+const ShopCoupons = lazy(() => import("@/pages/shop/ShopCoupons").then((m) => ({ default: m.ShopCoupons })));
+const ShopDetailView = lazy(() => import("@/pages/shop/ShopDetailView").then((m) => ({ default: m.ShopDetailView })));
 const ShopSettings = lazy(() => import("@/pages/shop/ShopSettings").then((m) => ({ default: m.ShopSettings })));
 const StaffManager = lazy(() => import("@/pages/shop/StaffManager").then((m) => ({ default: m.StaffManager })));
 const StockView = lazy(() => import("@/pages/shop/StockView").then((m) => ({ default: m.StockView })));
@@ -63,6 +84,7 @@ const SHOP_NAV: NavItem[] = [
   { to: "/shop/products", label: "商品", icon: Package },
   { to: "/shop/sets", label: "セット", icon: Layers },
   { to: "/shop/price-cuts", label: "値下げ", icon: Tag },
+  { to: "/shop/coupons", label: "クーポン", icon: Ticket },
   { to: "/shop/refunds", label: "返金", icon: Undo2 },
   { to: "/shop/staff", label: "スタッフ", icon: UsersRound },
   { to: "/shop/settings", label: "店舗設定", icon: Settings },
@@ -217,7 +239,30 @@ export default function App() {
                   </RoleGate>
                 }
               >
-                <Route index element={<WithShop>{(id) => <ShopSales shopId={id} />}</WithShop>} />
+                <Route
+                  index
+                  element={
+                    <WithShop>
+                      {(id) => (
+                        <Page width="lg">
+                          <ShopDetailView shopId={id} />
+                        </Page>
+                      )}
+                    </WithShop>
+                  }
+                />
+                <Route
+                  path="coupons"
+                  element={
+                    <WithShop>
+                      {(id) => (
+                        <Page width="lg">
+                          <ShopCoupons shopId={id} />
+                        </Page>
+                      )}
+                    </WithShop>
+                  }
+                />
                 <Route path="register" element={<WithShop>{(id) => <PosCatalog shopId={id} />}</WithShop>} />
                 <Route path="orders" element={<WithShop>{(id) => <OrdersBoard shopId={id} />}</WithShop>} />
                 <Route

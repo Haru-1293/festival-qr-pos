@@ -232,6 +232,56 @@ mkauto 全店半額 FIXED 30 null null "[]" true; check "2つ目の全ユーザ�
 quote "$IT2"; expect "2つの割引が順に適用(600-60-30)" 510 "$(jget "['total']")"
 expect "割引の数" 2 "$(jget "['discounts'].__len__()")"
 
+echo "== 店舗責任者の店舗限定クーポン =="
+MGRB_JAR=$TMP/mgrb2.jar
+req $ADMIN POST /api/admin/users/shop-manager "{\"shopId\":\"$SB\",\"loginId\":\"mgr-b\",\"password\":\"mgrpass123\",\"nickname\":\"B責任者\"}"; check "B責任者" 201
+req $MGRB_JAR POST /api/auth/login '{"loginId":"mgr-b","password":"mgrpass123"}'; check "B責任者ログイン" 200
+scoupon() { # jar shopId kind code totalLimit perWallet firstCome
+  req "$1" POST /api/shop-coupons/$2 "{\"name\":\"店舗クーポン$4\",\"kind\":\"$3\",\"code\":\"$4\",\"method\":\"FIXED\",\"value\":50,\"minOrderAmount\":null,\"maxDiscountAmount\":null,\"startsAt\":null,\"endsAt\":null,\"shopIds\":[],\"totalLimit\":$5,\"perWalletLimit\":$6,\"firstCome\":$7,\"combinableWithAuto\":true,\"note\":null}"
+}
+scoupon $MGR $SA COMMON SHOPA1 null null false; check "責任者が自店舗の限定クーポンを作る" 201
+expect "対象は自店舗だけ" "$SA" "$(sqlv "SELECT group_concat(target_id) FROM discount_targets WHERE discount_id = (SELECT discount_id FROM coupons WHERE code='SHOPA1')")"
+scoupon $MGR $SB COMMON SHOPB1 null null false; check "他店舗には作れない" 403
+scoupon $MGRB_JAR $SA COMMON SHOPB2 null null false; check "他店舗の責任者は作れない" 403
+scoupon $CLERK $SA COMMON SHOPA9 null null false; check "店員は作れない" 403
+scoupon $MGR $SA COMMON SHOPA1 null null false; check "コード重複は409" 409
+scoupon $MGR $SA ONE_TIME "" null null false; check "使い捨て(コード自動)も作れる" 201
+req $MGR GET /api/shop-coupons/$SA; check "自店舗のクーポン一覧" 200
+req $MGR GET /api/shop-coupons/$SB; check "他店舗の一覧は403" 403
+req $ADMIN GET /api/shop-coupons/$SA; check "管理者も見られる" 200
+SC_ID=$(sqlv "SELECT id FROM coupons WHERE code='SHOPA1'")
+GLOBAL_ID=$(sqlv "SELECT id FROM coupons WHERE code='SPRING100'")
+req $MGR POST /api/shop-coupons/$SA/$GLOBAL_ID/status '{"status":"STOPPED"}'; check "全店舗向けクーポンは責任者から止められない" 404
+req $MGR POST /api/shop-coupons/$SA/$SC_ID/status '{"status":"STOPPED"}'; check "自店舗のクーポンは止められる" 200
+expect "停止された" STOPPED "$(sqlv "SELECT status FROM coupons WHERE code='SHOPA1'")"
+req $MGR POST /api/shop-coupons/$SA/$SC_ID/status '{"status":"ACTIVE"}'; check "再開できる" 200
+req $MGRB_JAR POST /api/shop-coupons/$SB/$SC_ID/status '{"status":"STOPPED"}'; check "他店舗のクーポンは操作できない(404)" 404
+expect "監査ログに責任者の操作が残る" 1 "$(sqlv "SELECT CASE WHEN COUNT(*)>=1 THEN 1 ELSE 0 END FROM audit_logs a JOIN users u ON u.id=a.actor_user_id WHERE a.action='coupon.create' AND u.login_id='mgr-a'")"
+req $ADMIN GET /api/discounts; expect "管理者の一覧には店舗限定も出る" 1 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(1 if any(c['code']=='SHOPA1' for c in d['coupons']) else 0)")"
+expect "限定クーポンの対象店舗" "['$SA']" "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print([c['shopIds'] for c in d['coupons'] if c['code']=='SHOPA1'][0])")"
+
+echo "== 先着N人のクーポン =="
+scoupon $MGR $SA COMMON FIRST2 null null true; check "先着は人数が必須(400)" 400
+scoupon $MGR $SA ONE_TIME FIRSTX 2 null true; check "先着は共通コードのみ(400)" 400
+scoupon $MGR $SA COMMON FIRST2 2 null true; check "先着2人のクーポンを作る" 201
+expect "1人1回に固定される" "2|1|1" "$(sqlv "SELECT total_limit||'|'||per_wallet_limit||'|'||first_come FROM coupons WHERE code='FIRST2'")"
+buy $ALICE "$IT2" FIRST2; check "1人目(Alice)が使える" 200
+Q=$(newQr $ALICE); scan $CLERK "$Q" "$IT2" FIRST2; check "同じ人は2回使えない(1人1回)" 409; expect "理由" COUPON_INVALID "$(jget "['error']['code']")"
+buy $BOB "$IT2" FIRST2; check "2人目(Bob)が使える" 200
+Q=$(newQr $CAROL); scan $CLERK "$Q" "$IT2" FIRST2; check "3人目は使えない" 409
+expect "先着の人数に達したので終了" "このクーポンは先着の人数に達したため、終了しました" "$(jget "['error']['message']")"
+req $MGR GET /api/shop-coupons/$SA; expect "一覧の状態は上限到達" USED_UP "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print([c['state'] for c in d['coupons'] if c['code']=='FIRST2'][0])")"
+expect "一覧に先着の印" True "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print([c['firstCome'] for c in d['coupons'] if c['code']=='FIRST2'][0])")"
+
+echo "== クーポンのQR(FES1:K:+コード) =="
+scoupon $MGR $SA COMMON QRTEST null null false; check "QR用のクーポン" 201
+quote "$IT2" "FES1:K:QRTEST"; expect "QRの文字のまま使える" "None" "$(jget "['couponError']")"
+expect "クーポンが適用される" "True" "$(jget "['discounts'].__len__() >= 1 and any(x['kind']=='COMMON_COUPON' for x in d['discounts'])")"
+quote "$IT2" "fes1:k:qrtest"; expect "小文字でも使える" "None" "$(jget "['couponError']")"
+Q=$(newQr $ALICE); scan $CLERK "$Q" "$IT2" "FES1:K:QRTEST"; check "QRの文字で支払いを開始" 200
+expect "クーポンが適用された見積もり" "True" "$(jget "['quote']['discounts'].__len__() >= 1")"
+req $CLERK POST /api/pos/$SA/pay/$(jget "['sessionId']")/cancel '{}' >/dev/null
+
 echo "== 整合性 =="
 expect "注文の割引合計 = 割引の記録の合計" "0" "$(sqlv "SELECT COUNT(*) FROM orders o WHERE o.discount_total <> COALESCE((SELECT SUM(amount) FROM order_discounts d WHERE d.order_id=o.id),0)")"
 expect "注文の行の割引合計 = 注文の割引合計" "0" "$(sqlv "SELECT COUNT(*) FROM orders o WHERE o.discount_total <> COALESCE((SELECT SUM(discount_allocated) FROM order_lines l WHERE l.order_id=o.id),0)")"

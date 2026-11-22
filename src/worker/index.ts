@@ -13,7 +13,7 @@ import { cardRoutes } from "./routes/cards";
 import { catalogRoutes } from "./routes/catalog";
 import { setRoutes } from "./routes/sets";
 import { posRoutes } from "./routes/pos";
-import { discountRoutes } from "./routes/discounts";
+import { discountRoutes, shopCouponRoutes } from "./routes/discounts";
 import { reportRoutes } from "./routes/reports";
 import { orderRoutes } from "./routes/orders";
 import { publicRoutes } from "./routes/public";
@@ -56,6 +56,7 @@ const api = new Hono<AppEnv>()
   .route("/pos", posRoutes)
   .route("/refunds", refundRoutes)
   .route("/discounts", discountRoutes)
+  .route("/shop-coupons", shopCouponRoutes)
   .route("/reports", reportRoutes)
   .route("/orders", orderRoutes)
   .route("/public", publicRoutes)

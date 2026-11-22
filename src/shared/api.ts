@@ -516,6 +516,8 @@ export interface CouponInput extends DiscountRuleInput {
   count?: number;
   totalLimit: number | null;
   perWalletLimit: number | null;
+  /** 先着N人(totalLimit が人数、1人1回)。共通コードのみ */
+  firstCome?: boolean;
   /** 全ユーザー割引と併用できるか */
   combinableWithAuto: boolean;
   note: string | null;
@@ -543,6 +545,8 @@ export interface CouponDto {
   id: string;
   code: string;
   kind: "COMMON" | "ONE_TIME";
+  /** 先着N人のクーポンか(totalLimit が人数) */
+  firstCome: boolean;
   name: string;
   method: DiscountMethod;
   value: number;

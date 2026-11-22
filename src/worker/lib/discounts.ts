@@ -23,6 +23,7 @@ interface CouponRow extends RuleRow {
   total_limit: number | null;
   per_wallet_limit: number | null;
   used_count: number;
+  first_come: number;
   coupon_status: string;
   discount_status: string;
   starts_at: number | null;
@@ -78,7 +79,8 @@ const inTarget = (shopId: string) =>
   `(NOT EXISTS (SELECT 1 FROM discount_targets t WHERE t.discount_id = d.id AND t.target_type = 'SHOP')
      OR EXISTS (SELECT 1 FROM discount_targets t WHERE t.discount_id = d.id AND t.target_type = 'SHOP' AND t.target_id = '${shopId.replace(/[^A-Za-z0-9_-]/g, "")}'))`;
 
-export const normalizeCode = (s: string): string => s.normalize("NFKC").trim().replace(/\s+/g, "").toUpperCase();
+/** クーポンコードの正規化。QRから読み取った `FES1:K:` 付きの文字もそのまま受け付ける */
+export const normalizeCode = (s: string): string => s.normalize("NFKC").trim().replace(/\s+/g, "").toUpperCase().replace(/^FES1:K:/, "");
 
 /**
  * 割引を計算する(全ユーザー割引 → クーポンの順。仕様 v0.2 §14.7)。
@@ -153,7 +155,7 @@ export async function computeDiscounts(
   if (code) {
     const c = await db
       .prepare(
-        `SELECT ${RULE_COLS}, c.id AS coupon_id, c.code, c.kind, c.total_limit, c.per_wallet_limit, c.used_count, c.status AS coupon_status,
+        `SELECT ${RULE_COLS}, c.id AS coupon_id, c.code, c.kind, c.total_limit, c.per_wallet_limit, c.used_count, c.first_come, c.status AS coupon_status,
                 d.status AS discount_status, d.starts_at, d.ends_at
            FROM coupons c JOIN discounts d ON d.id = c.discount_id
           WHERE c.code = ?`,
@@ -164,7 +166,7 @@ export async function computeDiscounts(
     else if (c.coupon_status !== "ACTIVE" || c.discount_status !== "ACTIVE") couponError = "このクーポンは使えなくなっています";
     else if (c.starts_at !== null && c.starts_at > now) couponError = "このクーポンはまだ使えません(開始前です)";
     else if (c.ends_at !== null && c.ends_at <= now) couponError = "このクーポンは有効期限が切れています";
-    else if (c.total_limit !== null && c.used_count >= c.total_limit) couponError = c.kind === "ONE_TIME" ? "このクーポンはすでに使われています" : "このクーポンは利用上限に達しました";
+    else if (c.total_limit !== null && c.used_count >= c.total_limit) couponError = c.first_come === 1 ? "このクーポンは先着の人数に達したため、終了しました" : c.kind === "ONE_TIME" ? "このクーポンはすでに使われています" : "このクーポンは利用上限に達しました";
     else {
       const shopOk = await db
         .prepare(`SELECT 1 AS ok FROM discounts d WHERE d.id = ? AND ${inTarget(shopId)}`)
