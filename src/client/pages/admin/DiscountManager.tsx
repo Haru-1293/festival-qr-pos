@@ -101,6 +101,7 @@ export function DiscountManager() {
                 </p>
                 <Badge variant={a.state === "RUNNING" ? "destructive" : "muted"}>{STATE_LABEL[a.state]}</Badge>
               </div>
+              {a.items.length > 0 && <p className="text-xs font-semibold text-primary">対象: {a.items.map((i) => (i.type === "TAG" ? `タグ「${i.name}」` : i.type === "SET" ? `セット「${i.name}」` : i.name)).join("、")}</p>}
               <p className="text-xs text-muted-foreground">
                 {shopNames(a.shopIds)} ・ {period(a)} ・ {a.combinableWithCoupon ? "クーポン併用可" : "クーポン併用不可"} ・ 利用 {a.usedCount}回 / 計 {money(a.usedAmount)}
               </p>

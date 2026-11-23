@@ -4,6 +4,16 @@ import type { QuoteDiscount } from "@shared/api";
 export interface DiscountLineInput {
   /** 割引対象にできる金額(値下げ後の単価 × 数量。セットの追加料金は含めない。割引対象外なら 0) */
   base: number;
+  /** 単品なら商品ID、セットならセットID(商品・タグ・セットを指定した割引の判定に使う) */
+  kind: "PRODUCT" | "SET";
+  productId: string;
+}
+
+/** 割引が対象を絞っているときの、商品・タグ・セットの指定(空なら絞らない=割引対象の全商品) */
+interface ItemTargets {
+  products: Set<string>;
+  tags: Set<string>;
+  sets: Set<string>;
 }
 
 interface RuleRow {
@@ -101,6 +111,44 @@ export async function computeDiscounts(
   const perLine = lines.map(() => 0);
   const applied: AppliedDiscount[] = [];
 
+  // 商品のタグ(タグで対象を絞った割引の判定用)
+  const lineTags = new Map<string, Set<string>>();
+  const prodIds = [...new Set(lines.filter((l) => l.kind === "PRODUCT").map((l) => l.productId))];
+  for (let i = 0; i < prodIds.length; i += 80) {
+    const part = prodIds.slice(i, i + 80);
+    const { results } = await db
+      .prepare(`SELECT product_id, tag_id FROM product_tags WHERE product_id IN (${part.map(() => "?").join(",")})`)
+      .bind(...part)
+      .all<{ product_id: string; tag_id: string }>();
+    for (const r of results) {
+      if (!lineTags.has(r.product_id)) lineTags.set(r.product_id, new Set());
+      lineTags.get(r.product_id)!.add(r.tag_id);
+    }
+  }
+  // 割引ごとの対象(商品・タグ・セット)。指定が無い割引は、割引対象の全商品が対象
+  const targetsOf = new Map<string, ItemTargets>();
+  const loadTargets = async (discountIds: string[]) => {
+    for (let i = 0; i < discountIds.length; i += 80) {
+      const part = discountIds.slice(i, i + 80);
+      const { results } = await db
+        .prepare(`SELECT discount_id, target_type, target_id FROM discount_targets WHERE target_type <> 'SHOP' AND discount_id IN (${part.map(() => "?").join(",")})`)
+        .bind(...part)
+        .all<{ discount_id: string; target_type: "PRODUCT" | "TAG" | "SET"; target_id: string }>();
+      for (const r of results) {
+        const t = targetsOf.get(r.discount_id) ?? { products: new Set(), tags: new Set(), sets: new Set() };
+        (r.target_type === "PRODUCT" ? t.products : r.target_type === "TAG" ? t.tags : t.sets).add(r.target_id);
+        targetsOf.set(r.discount_id, t);
+      }
+    }
+  };
+  const matches = (t: ItemTargets | undefined, l: DiscountLineInput): boolean => {
+    if (!t) return true;
+    if (l.kind === "SET") return t.sets.has(l.productId);
+    if (t.products.has(l.productId)) return true;
+    for (const tag of lineTags.get(l.productId) ?? []) if (t.tags.has(tag)) return true;
+    return false;
+  };
+
   const apply = (
     kind: QuoteDiscount["kind"],
     r: RuleRow,
@@ -109,11 +157,14 @@ export async function computeDiscounts(
     if (r.min_order_amount !== null && subtotal < r.min_order_amount) {
       return { ok: false, reason: `${r.min_order_amount} 以上のお買い上げで使えます` };
     }
-    const eligible = remaining.reduce((s, n) => s + n, 0);
+    const t = targetsOf.get(r.id);
+    // 対象を絞った割引は、その商品の残り対象額だけが対象。絞っていなければ全行
+    const pool = remaining.map((n, i) => (matches(t, lines[i]) ? n : 0));
+    const eligible = pool.reduce((s, n) => s + n, 0);
     const rule = { method: r.method, value: r.value, max: r.max_discount_amount, min: r.min_order_amount };
     const amount = discountAmount(rule, eligible);
     if (amount <= 0) return { ok: false, reason: "割引の対象になる商品がありません" };
-    const alloc = allocate(amount, remaining);
+    const alloc = allocate(amount, pool);
     alloc.forEach((a, i) => {
       remaining[i] -= a;
       perLine[i] += a;
@@ -144,6 +195,7 @@ export async function computeDiscounts(
     )
     .bind(now, now)
     .all<RuleRow>();
+  await loadTargets(autos.results.map((r) => r.id));
   let autoBlocksCoupon = false;
   for (const r of autos.results) {
     if (apply("AUTO", r, {}).ok && r.combinable_with_coupon === 0) autoBlocksCoupon = true;
@@ -184,6 +236,7 @@ export async function computeDiscounts(
           if ((n?.n ?? 0) >= c.per_wallet_limit) couponError = "このクーポンは、お客様の利用回数の上限に達しています";
         }
         if (!couponError) {
+          await loadTargets([c.id]);
           const r = apply(c.kind === "COMMON" ? "COMMON_COUPON" : "ONE_TIME_COUPON", c, {
             couponId: c.coupon_id,
             code: c.code,

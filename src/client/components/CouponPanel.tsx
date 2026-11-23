@@ -1,7 +1,7 @@
 import { Printer, QrCode, Ticket } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
-import type { CouponDto, CouponInput, DiscountMethod, ShopDto } from "@shared/api";
+import type { CouponDto, CouponInput, DiscountMethod, ItemTarget, ProductDto, SetDto, ShopDto, TagDto } from "@shared/api";
 import { QrCodeView } from "@/components/QrCodeView";
 import { ErrorText, Field } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { DateTimePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 import { formatDateTime } from "@/lib/utils";
@@ -43,6 +44,7 @@ export interface RuleForm {
   startsAt: string;
   endsAt: string;
   shopIds: string[];
+  items: ItemTarget[];
 }
 export const emptyRule = (name: string): RuleForm => ({
   name,
@@ -53,7 +55,61 @@ export const emptyRule = (name: string): RuleForm => ({
   startsAt: "",
   endsAt: "",
   shopIds: [],
+  items: [],
 });
+
+/** 割引の対象を、商品・タグ・セットで絞る(店舗を1つに決めたときだけ選べる)。何も選ばなければ、割引対象の全商品 */
+function ItemTargetPicker({ shopId, value, onChange }: { shopId: string | null; value: ItemTarget[]; onChange: (v: ItemTarget[]) => void }) {
+  const [products, setProducts] = useState<ProductDto[]>([]);
+  const [tags, setTags] = useState<TagDto[]>([]);
+  const [sets, setSets] = useState<SetDto[]>([]);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    setProducts([]);
+    setTags([]);
+    setSets([]);
+    setErr(null);
+    if (!shopId) return;
+    Promise.all([api<{ products: ProductDto[] }>(`/catalog/${shopId}/products`), api<{ tags: TagDto[] }>(`/catalog/${shopId}/tags`), api<{ sets: SetDto[] }>(`/catalog/${shopId}/sets`)])
+      .then(([p, t, st]) => {
+        setProducts(p.products.filter((x) => x.status !== "ARCHIVED"));
+        setTags(t.tags.filter((x) => x.active));
+        setSets(st.sets.filter((x) => x.status !== "ARCHIVED"));
+      })
+      .catch(() => setErr("商品の一覧を読み込めませんでした"));
+  }, [shopId]);
+  if (!shopId) return <p className="text-xs text-muted-foreground">特定の商品・タグ・セットだけを対象にするには、対象の店舗を1つだけ選んでください(選ばなければ割引対象の全商品が対象です)。</p>;
+  const has = (type: ItemTarget["type"], id: string) => value.some((v) => v.type === type && v.id === id);
+  const toggle = (type: ItemTarget["type"], id: string) => onChange(has(type, id) ? value.filter((v) => !(v.type === type && v.id === id)) : [...value, { type, id }]);
+  const group = (title: string, type: ItemTarget["type"], list: { id: string; name: string }[]) =>
+    list.length === 0 ? null : (
+      <div className="flex flex-col gap-1.5">
+        <p className="text-xs font-semibold text-muted-foreground">{title}</p>
+        <div className="flex flex-wrap gap-2">
+          {list.map((x) => (
+            <label
+              key={x.id}
+              className={`flex h-9 cursor-pointer items-center gap-2 rounded-full border px-3 text-sm font-semibold ${has(type, x.id) ? "border-primary bg-secondary" : "border-input bg-card"}`}
+            >
+              <Checkbox className="size-4" checked={has(type, x.id)} onCheckedChange={() => toggle(type, x.id)} />
+              {x.name}
+            </label>
+          ))}
+        </div>
+      </div>
+    );
+  return (
+    <Field label="対象の商品・タグ・セット(任意)" hint={value.length === 0 ? "選ばなければ、割引対象の全商品が対象です" : `${value.length}件を選択中。選んだものだけが割引されます`}>
+      <div className="flex flex-col gap-3 rounded-xl border border-border p-3">
+        {err && <ErrorText message={err} />}
+        {group("タグ", "TAG", tags)}
+        {group("商品", "PRODUCT", products)}
+        {group("セット", "SET", sets)}
+        {!err && products.length + tags.length + sets.length === 0 && <p className="text-sm text-muted-foreground">この店舗にはまだ商品がありません</p>}
+      </div>
+    </Field>
+  );
+}
 
 export function RuleFields({ f, set, shops, fixedShop }: { f: RuleForm; set: (p: Partial<RuleForm>) => void; shops: ShopDto[]; fixedShop?: ShopDto }) {
   return (
@@ -108,6 +164,7 @@ export function RuleFields({ f, set, shops, fixedShop }: { f: RuleForm; set: (p:
                   onClick={() =>
                     set({
                       shopIds: on ? f.shopIds.filter((x) => x !== s.id) : [...f.shopIds, s.id],
+                      items: [],
                     })
                   }
                   className={`h-9 rounded-full border px-3 text-sm font-semibold ${on ? "border-primary bg-primary text-primary-foreground" : "border-input bg-card"}`}
@@ -119,6 +176,7 @@ export function RuleFields({ f, set, shops, fixedShop }: { f: RuleForm; set: (p:
           </div>
         </Field>
       )}
+      <ItemTargetPicker shopId={fixedShop?.id ?? (f.shopIds.length === 1 ? f.shopIds[0] : null)} value={f.items} onChange={(items) => set({ items })} />
       <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
         「値下げ対象外」の商品と、セットの追加料金は割引されません。割引は店舗の値下げ後の価格に対して、全ユーザー割引 → クーポンの順に計算します。
       </p>
@@ -135,6 +193,7 @@ export const ruleBody = (f: RuleForm) => ({
   startsAt: toMs(f.startsAt),
   endsAt: toMs(f.endsAt),
   shopIds: f.shopIds,
+  items: f.items,
 });
 
 type Kind = "COMMON" | "ONE_TIME" | "FIRST_COME";
@@ -338,6 +397,9 @@ export function CouponList({
             <p>
               {c.name}:{describe(c, money)}
             </p>
+            {c.items.length > 0 && (
+              <p className="text-xs font-semibold text-primary">対象: {c.items.map((i) => (i.type === "TAG" ? `タグ「${i.name}」` : i.type === "SET" ? `セット「${i.name}」` : i.name)).join("、")}</p>
+            )}
             <p className="text-xs text-muted-foreground">
               {c.firstCome ? "先着" : c.kind === "COMMON" ? "共通" : "使い捨て"} ・ {showShops ? `${shopNames(c.shopIds)} ・ ` : ""}
               {period(c)} ・{" "}

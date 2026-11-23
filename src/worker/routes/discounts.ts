@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { AutoDiscountDto, CouponDto, DiscountStatus } from "@shared/api";
+import type { AutoDiscountDto, CouponDto, DiscountStatus, ItemTargetDto } from "@shared/api";
 import type { AppEnv, AuthContext } from "../env";
 import { auditStmt } from "../lib/audit";
 import { normalizeCode } from "../lib/discounts";
@@ -24,6 +24,7 @@ const ruleShape = {
   startsAt: ms,
   endsAt: ms,
   shopIds: z.array(id26).max(100),
+  items: z.array(z.object({ type: z.enum(["PRODUCT", "TAG", "SET"]), id: id26 })).max(50).default([]),
 };
 type Rule = z.infer<z.ZodObject<typeof ruleShape>>;
 
@@ -72,6 +73,7 @@ export const discountRoutes = new Hono<AppEnv>()
       loadCoupons(db, now),
     ]);
     const shops = (id: string) => t.results.filter((x) => x.discount_id === id).map((x) => x.target_id);
+    const itemMap = await loadItemTargets(db);
     const autos: AutoDiscountDto[] = d.results.map((r) => ({
       id: r.id,
       name: r.name,
@@ -84,6 +86,7 @@ export const discountRoutes = new Hono<AppEnv>()
       combinableWithCoupon: r.combinable_with_coupon === 1,
       status: r.status,
       shopIds: shops(r.id),
+      items: itemMap.get(r.id) ?? [],
       state: stateOf(r.status, r.starts_at, r.ends_at, now),
       usedCount: u.results.find((x) => x.discount_id === r.id)?.n ?? 0,
       usedAmount: u.results.find((x) => x.discount_id === r.id)?.amt ?? 0,
@@ -99,6 +102,7 @@ export const discountRoutes = new Hono<AppEnv>()
     checkRule(b);
     const db = c.env.DB;
     await assertShops(db, b.shopIds);
+    await assertItems(db, b.items, b.shopIds);
     const id = newId();
     const now = Date.now();
     await db.batch([
@@ -109,7 +113,8 @@ export const discountRoutes = new Hono<AppEnv>()
         )
         .bind(id, b.name, b.method, b.value, b.minOrderAmount, b.maxDiscountAmount, b.startsAt, b.endsAt, b.combinableWithCoupon ? 1 : 0, now, auth.userId),
       ...b.shopIds.map((s) => db.prepare("INSERT INTO discount_targets (discount_id, target_type, target_id) VALUES (?, 'SHOP', ?)").bind(id, s)),
-      auditStmt(db, { actor: auth, action: "discount.create", targetType: "discount", targetId: id, after: { kind: "AUTO", name: b.name, method: b.method, value: b.value, shopIds: b.shopIds } }),
+      ...b.items.map((i) => db.prepare("INSERT INTO discount_targets (discount_id, target_type, target_id) VALUES (?, ?, ?)").bind(id, i.type, i.id)),
+      auditStmt(db, { actor: auth, action: "discount.create", targetType: "discount", targetId: id, after: { kind: "AUTO", name: b.name, method: b.method, value: b.value, shopIds: b.shopIds, items: b.items } }),
     ]);
     return c.json({ id }, 201);
   })
@@ -191,6 +196,7 @@ async function loadCoupons(db: D1Database, now: number, shopId?: string): Promis
     db.prepare("SELECT discount_id, target_id FROM discount_targets WHERE target_type = 'SHOP'").all<{ discount_id: string; target_id: string }>(),
   ]);
   const shops = (id: string) => t.results.filter((x) => x.discount_id === id).map((x) => x.target_id);
+  const itemMap = await loadItemTargets(db);
   return cp.results.map((r) => {
     const base = stateOf(r.cstatus === "ACTIVE" ? r.status : r.cstatus, r.starts_at, r.ends_at, now);
     return {
@@ -212,6 +218,7 @@ async function loadCoupons(db: D1Database, now: number, shopId?: string): Promis
       status: r.cstatus,
       state: base === "RUNNING" && r.total_limit !== null && r.used_count >= r.total_limit ? "USED_UP" : base,
       shopIds: shops(r.discount_id),
+      items: itemMap.get(r.discount_id) ?? [],
       note: r.note,
       createdAt: r.created_at,
     } satisfies CouponDto;
@@ -238,6 +245,7 @@ type CouponBody = z.infer<typeof couponSchema>;
 async function createCoupons(db: D1Database, auth: AuthContext, b: CouponBody, shopIds: string[]): Promise<string[]> {
   checkRule(b);
   await assertShops(db, shopIds);
+  await assertItems(db, b.items, shopIds);
   const firstCome = b.firstCome === true;
   if (firstCome) {
     if (b.kind !== "COMMON") throw badRequest("先着のクーポンは共通コードで作ってください");
@@ -273,6 +281,7 @@ async function createCoupons(db: D1Database, auth: AuthContext, b: CouponBody, s
         )
         .bind(discountId, b.name, b.method, b.value, b.minOrderAmount, b.maxDiscountAmount, b.startsAt, b.endsAt, b.combinableWithAuto ? 1 : 0, now, auth.userId),
       ...shopIds.map((s) => db.prepare("INSERT INTO discount_targets (discount_id, target_type, target_id) VALUES (?, 'SHOP', ?)").bind(discountId, s)),
+      ...b.items.map((i) => db.prepare("INSERT INTO discount_targets (discount_id, target_type, target_id) VALUES (?, ?, ?)").bind(discountId, i.type, i.id)),
       ...codes.map((code) =>
         db
           .prepare(
@@ -286,7 +295,7 @@ async function createCoupons(db: D1Database, auth: AuthContext, b: CouponBody, s
         action: "coupon.create",
         targetType: "discount",
         targetId: discountId,
-        after: { kind: b.kind, firstCome, name: b.name, method: b.method, value: b.value, count: codes.length, codes: codes.slice(0, 5), shopIds },
+        after: { kind: b.kind, firstCome, name: b.name, method: b.method, value: b.value, count: codes.length, codes: codes.slice(0, 5), shopIds, items: b.items },
       }),
     ]);
   } catch (e) {
@@ -314,4 +323,36 @@ async function assertShops(db: D1Database, shopIds: string[]) {
   if (shopIds.length === 0) return;
   const { results } = await db.prepare(`SELECT id FROM shops WHERE id IN (${shopIds.map(() => "?").join(",")})`).bind(...shopIds).all();
   if (results.length !== new Set(shopIds).size) throw badRequest("存在しない店舗が含まれています");
+}
+
+/** 商品・タグ・セットで対象を絞る指定が、実在し、対象の店舗の持ち物かを確かめる(店舗を指定しないときは、どの店舗のものでもよい) */
+async function assertItems(db: D1Database, items: { type: "PRODUCT" | "TAG" | "SET"; id: string }[], shopIds: string[]) {
+  if (items.length === 0) return;
+  const table = { PRODUCT: "products", TAG: "tags", SET: "sets" } as const;
+  for (const type of ["PRODUCT", "TAG", "SET"] as const) {
+    const ids = [...new Set(items.filter((i) => i.type === type).map((i) => i.id))];
+    if (ids.length === 0) continue;
+    const { results } = await db
+      .prepare(`SELECT id, shop_id FROM ${table[type]} WHERE id IN (${ids.map(() => "?").join(",")})`)
+      .bind(...ids)
+      .all<{ id: string; shop_id: string }>();
+    if (results.length !== ids.length) throw badRequest("存在しない商品・タグ・セットが含まれています");
+    if (shopIds.length > 0 && results.some((r) => !shopIds.includes(r.shop_id))) throw badRequest("対象の店舗に含まれない商品・タグ・セットが指定されています");
+  }
+}
+
+async function loadItemTargets(db: D1Database): Promise<Map<string, ItemTargetDto[]>> {
+  const { results } = await db
+    .prepare(
+      `SELECT t.discount_id, t.target_type AS type, t.target_id AS id, COALESCE(p.name, g.name, s.name, '(削除済み)') AS name
+         FROM discount_targets t
+         LEFT JOIN products p ON t.target_type = 'PRODUCT' AND p.id = t.target_id
+         LEFT JOIN tags g ON t.target_type = 'TAG' AND g.id = t.target_id
+         LEFT JOIN sets s ON t.target_type = 'SET' AND s.id = t.target_id
+        WHERE t.target_type <> 'SHOP'`,
+    )
+    .all<{ discount_id: string; type: ItemTargetDto["type"]; id: string; name: string }>();
+  const m = new Map<string, ItemTargetDto[]>();
+  for (const r of results) m.set(r.discount_id, [...(m.get(r.discount_id) ?? []), { type: r.type, id: r.id, name: r.name }]);
+  return m;
 }

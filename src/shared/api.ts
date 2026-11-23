@@ -491,6 +491,15 @@ export interface IssuedCard {
 export type DiscountMethod = "PERCENT" | "FIXED";
 export type DiscountStatus = "ACTIVE" | "STOPPED" | "ENDED";
 
+/** 割引の対象を絞る指定(商品・タグ・セット)。指定が無ければ、割引対象の全商品 */
+export interface ItemTarget {
+  type: "PRODUCT" | "TAG" | "SET";
+  id: string;
+}
+export interface ItemTargetDto extends ItemTarget {
+  name: string;
+}
+
 export interface DiscountRuleInput {
   name: string;
   method: DiscountMethod;
@@ -501,6 +510,8 @@ export interface DiscountRuleInput {
   endsAt: number | null;
   /** 空なら全店舗 */
   shopIds: string[];
+  /** 商品・タグ・セットで対象を絞る(空なら絞らない) */
+  items?: ItemTarget[];
 }
 
 export interface AutoDiscountInput extends DiscountRuleInput {
@@ -535,6 +546,7 @@ export interface AutoDiscountDto {
   combinableWithCoupon: boolean;
   status: DiscountStatus;
   shopIds: string[];
+  items: ItemTargetDto[];
   /** 今の時刻で適用される状態か */
   state: "RUNNING" | "SCHEDULED" | "ENDED" | "STOPPED";
   usedCount: number;
@@ -561,6 +573,7 @@ export interface CouponDto {
   status: DiscountStatus;
   state: "RUNNING" | "SCHEDULED" | "ENDED" | "STOPPED" | "USED_UP";
   shopIds: string[];
+  items: ItemTargetDto[];
   note: string | null;
   createdAt: number;
 }

@@ -282,6 +282,29 @@ Q=$(newQr $ALICE); scan $CLERK "$Q" "$IT2" "FES1:K:QRTEST"; check "QRの文字�
 expect "クーポンが適用された見積もり" "True" "$(jget "['quote']['discounts'].__len__() >= 1")"
 req $CLERK POST /api/pos/$SA/pay/$(jget "['sessionId']")/cancel '{}' >/dev/null
 
+echo "== 対象の商品・タグを指定した割引 =="
+req $MGR POST /api/catalog/$SA/tags '{"name":"麺類"}'; check "タグ(麺類)" 201; TAGM=$(jget "['id']")
+req $MGR POST /api/catalog/$SA/products "{\"name\":\"焼うどん\",\"price\":400,\"saleMode\":\"BOTH\",\"discountable\":true,\"sortOrder\":9,\"tagIds\":[\"$TAGM\"],\"trackStock\":false}"; check "麺類タグの商品" 201; UDON=$(jget "['id']")
+req $MGRB_JAR POST /api/catalog/$SB/products '{"name":"たこ焼き","price":500,"saleMode":"BOTH","discountable":true,"sortOrder":1,"tagIds":[],"trackStock":false}'; check "B店の商品" 201; TAKO=$(jget "['id']")
+cpart() { python3 -I -c "import json;d=json.load(open('$TMP/body'));print(sum(x['amount'] for x in d['discounts'] if x['kind']!='AUTO'))"; }
+sqlv "UPDATE discounts SET status = 'STOPPED' WHERE kind = 'AUTO'" >/dev/null # 他の全ユーザー割引の影響を受けないよう止めておく
+icoupon() { # code method value itemsJson [jar] [path]
+  req ${5:-$ADMIN} POST ${6:-/api/discounts/coupons} "{\"name\":\"対象指定$1\",\"kind\":\"COMMON\",\"code\":\"$1\",\"method\":\"$2\",\"value\":$3,\"minOrderAmount\":null,\"maxDiscountAmount\":null,\"startsAt\":null,\"endsAt\":null,\"shopIds\":[\"$SA\"],\"items\":$4,\"totalLimit\":null,\"perWalletLimit\":null,\"combinableWithAuto\":true,\"note\":null}"
+}
+icoupon ONLYCOLA FIXED 100 "[{\"type\":\"PRODUCT\",\"id\":\"$COLA\"}]"; check "商品を指定したクーポン" 201
+quote "$(items $YAKI 2 $COLA 1)" ONLYCOLA; expect "指定した商品(コーラ)だけが対象: 100円引き" 100 "$(cpart)"
+quote "$(items $YAKI 2)" ONLYCOLA; expect "対象の商品が無いと使えない" "割引の対象になる商品がありません" "$(jget "['couponError']")"
+icoupon HALFNOODLE PERCENT 50 "[{\"type\":\"TAG\",\"id\":\"$TAGM\"}]"; check "タグを指定したクーポン" 201
+quote "$(items $UDON 1 $YAKI 1)" HALFNOODLE; expect "麺類タグの商品(400円)だけが半額: 200円引き" 200 "$(cpart)"
+icoupon MIXED FIXED 1000 "[{\"type\":\"PRODUCT\",\"id\":\"$COLA\"},{\"type\":\"TAG\",\"id\":\"$TAGM\"}]"; check "商品とタグの両方を指定" 201
+quote "$(items $UDON 1 $COLA 1 $YAKI 1)" MIXED; expect "対象(550円)で頭打ち。焼きそばは対象外" 550 "$(cpart)"
+req $ADMIN GET /api/discounts; expect "一覧に対象の名前が出る" "コーラ" "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print([i['name'] for c in d['coupons'] if c['code']=='ONLYCOLA' for i in c['items']][0])")"
+icoupon BADITEM FIXED 100 "[{\"type\":\"PRODUCT\",\"id\":\"$TAKO\"}]"; check "対象の店舗に含まれない商品は400" 400
+icoupon NOITEM FIXED 100 "[{\"type\":\"SET\",\"id\":\"00000000000000000000000000\"}]"; check "存在しないセットは400" 400
+icoupon SHOPITEM FIXED 100 "[{\"type\":\"PRODUCT\",\"id\":\"$COLA\"}]" $MGR /api/shop-coupons/$SA; check "店舗責任者も自店舗の商品を指定できる" 201
+icoupon SHOPBAD FIXED 100 "[{\"type\":\"PRODUCT\",\"id\":\"$TAKO\"}]" $MGR /api/shop-coupons/$SA; check "店舗責任者は他店舗の商品を指定できない" 400
+req $ADMIN POST /api/discounts/auto "{\"name\":\"麺類10%\",\"method\":\"PERCENT\",\"value\":10,\"minOrderAmount\":null,\"maxDiscountAmount\":null,\"startsAt\":null,\"endsAt\":null,\"shopIds\":[\"$SA\"],\"items\":[{\"type\":\"TAG\",\"id\":\"$TAGM\"}],\"combinableWithCoupon\":true}"; check "全ユーザー割引にも対象指定できる" 201
+quote "$(items $UDON 1 $YAKI 1)"; expect "麺類10%は焼うどんだけ(40円引き)" 40 "$(jget "['discounts']" >/dev/null; python3 -I -c "import json;d=json.load(open('$TMP/body'));print(sum(x['amount'] for x in d['discounts'] if x['name']=='麺類10%'))")"
 echo "== 整合性 =="
 expect "注文の割引合計 = 割引の記録の合計" "0" "$(sqlv "SELECT COUNT(*) FROM orders o WHERE o.discount_total <> COALESCE((SELECT SUM(amount) FROM order_discounts d WHERE d.order_id=o.id),0)")"
 expect "注文の行の割引合計 = 注文の割引合計" "0" "$(sqlv "SELECT COUNT(*) FROM orders o WHERE o.discount_total <> COALESCE((SELECT SUM(discount_allocated) FROM order_lines l WHERE l.order_id=o.id),0)")"
