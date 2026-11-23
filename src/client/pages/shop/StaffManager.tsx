@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { useAction } from "@/lib/useAction";
+import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/utils";
 import { useConfirm, useNotify, usePrompt } from "@/lib/confirm";
 
@@ -21,6 +22,7 @@ export function StaffManager({ shopId }: { shopId: string }) {
   const notify = useNotify();
   const [staff, setStaff] = useState<UserDto[]>([]);
   const [loginId, setLoginId] = useState("");
+  const { me } = useAuth();
   const [nickname, setNickname] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<"CLERK" | "SHOP_MANAGER">("CLERK");
@@ -65,7 +67,12 @@ export function StaffManager({ shopId }: { shopId: string }) {
   };
 
   const changeLoginId = async (u: UserDto) => {
-    const next = await prompt(`${u.nickname} さんの新しいログインID(いまのIDでは入れなくなり、ログイン中の端末はログアウトされます)`, { title: "ログインIDの変更", defaultValue: u.loginId ?? "", required: true, action: "変更する" });
+    const next = await prompt(`${u.nickname} さんの新しいログインID(いまのIDでは入れなくなり、ログイン中の端末はログアウトされます)`, {
+      title: "ログインIDの変更",
+      defaultValue: u.loginId ?? "",
+      required: true,
+      action: "変更する",
+    });
     if (!next || next === u.loginId) return;
     void row.run(async () => {
       await api(`/shops/${shopId}/staff/${u.id}/login-id`, {
@@ -180,7 +187,7 @@ export function StaffManager({ shopId }: { shopId: string }) {
                   {u.status !== "ACTIVE" && <Badge variant="warning">停止中</Badge>}
                 </div>
               </div>
-              {u.role === "CLERK" && (
+              {(u.role === "CLERK" || (u.role === "SHOP_MANAGER" && u.id !== me?.user.id)) && (
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" variant="outline" onClick={() => changeLoginId(u)} disabled={row.pending}>
                     <Pencil className="!size-4" /> ID変更
@@ -188,10 +195,12 @@ export function StaffManager({ shopId }: { shopId: string }) {
                   <Button size="sm" variant="outline" onClick={() => resetPassword(u)} disabled={row.pending}>
                     <KeyRound className="!size-4" /> パスワード再設定
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => issueQr(u)} disabled={row.pending || u.status !== "ACTIVE"}>
-                    <QrCode className="!size-4" /> {u.loginQrIssuedAt ? "QR再発行" : "ログインQR発行"}
-                  </Button>
-                  {u.loginQrIssuedAt && (
+                  {u.role === "CLERK" && (
+                    <Button size="sm" variant="outline" onClick={() => issueQr(u)} disabled={row.pending || u.status !== "ACTIVE"}>
+                      <QrCode className="!size-4" /> {u.loginQrIssuedAt ? "QR再発行" : "ログインQR発行"}
+                    </Button>
+                  )}
+                  {u.role === "CLERK" && u.loginQrIssuedAt && (
                     <Button size="sm" variant="outline" onClick={() => revokeQr(u)} disabled={row.pending}>
                       QR失効
                     </Button>
@@ -199,7 +208,7 @@ export function StaffManager({ shopId }: { shopId: string }) {
                   <Button size="sm" variant="outline" onClick={() => toggle(u)} disabled={row.pending}>
                     {u.status === "ACTIVE" ? "利用停止" : "再開"}
                   </Button>
-                  {u.loginQrIssuedAt && <span className="self-center text-xs text-muted-foreground">QR発行 {formatDateTime(u.loginQrIssuedAt)}</span>}
+                  {u.role === "CLERK" && u.loginQrIssuedAt && <span className="self-center text-xs text-muted-foreground">QR発行 {formatDateTime(u.loginQrIssuedAt)}</span>}
                 </div>
               )}
             </div>

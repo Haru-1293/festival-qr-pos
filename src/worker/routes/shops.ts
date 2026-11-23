@@ -79,7 +79,9 @@ export const shopRoutes = new Hono<AppEnv>()
       const { shopId, userId } = c.req.valid("param");
       assertShopAccess(auth, shopId);
       const target = await getUserBasic(c.env.DB, userId);
-      if (!target || target.role !== "CLERK" || target.shop_id !== shopId) throw notFound("店員が見つかりません");
+      if (!target || (target.role !== "CLERK" && target.role !== "SHOP_MANAGER") || target.shop_id !== shopId) throw notFound("スタッフが見つかりません");
+      // 共同の店舗責任者の操作は、他の責任者に対してだけ(自分のパスワード・IDは各自の設定から変える)
+      if (target.role === "SHOP_MANAGER" && target.id === auth.userId) throw badRequest("自分自身のアカウントはここでは変更できません");
       const hash = await hashPassword(c.req.valid("json").password);
       await c.env.DB.batch([
         c.env.DB.prepare("UPDATE users SET password_hash = ? WHERE id = ?").bind(hash, userId),
@@ -101,7 +103,9 @@ export const shopRoutes = new Hono<AppEnv>()
       const { status } = c.req.valid("json");
       if (userId === auth.userId) throw badRequest("自分自身のアカウントは停止できません");
       const target = await getUserBasic(c.env.DB, userId);
-      if (!target || target.role !== "CLERK" || target.shop_id !== shopId) throw notFound("店員が見つかりません");
+      if (!target || (target.role !== "CLERK" && target.role !== "SHOP_MANAGER") || target.shop_id !== shopId) throw notFound("スタッフが見つかりません");
+      // 共同の店舗責任者の操作は、他の責任者に対してだけ(自分のパスワード・IDは各自の設定から変える)
+      if (target.role === "SHOP_MANAGER" && target.id === auth.userId) throw badRequest("自分自身のアカウントはここでは変更できません");
       await c.env.DB.batch([
         c.env.DB.prepare("UPDATE users SET status = ? WHERE id = ?").bind(status, userId),
         ...(status === "SUSPENDED" ? [c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId)] : []),
@@ -128,7 +132,9 @@ export const shopRoutes = new Hono<AppEnv>()
       assertShopAccess(auth, shopId);
       const { loginId } = c.req.valid("json");
       const target = await getUserBasic(c.env.DB, userId);
-      if (!target || target.role !== "CLERK" || target.shop_id !== shopId) throw notFound("店員が見つかりません");
+      if (!target || (target.role !== "CLERK" && target.role !== "SHOP_MANAGER") || target.shop_id !== shopId) throw notFound("スタッフが見つかりません");
+      // 共同の店舗責任者の操作は、他の責任者に対してだけ(自分のパスワード・IDは各自の設定から変える)
+      if (target.role === "SHOP_MANAGER" && target.id === auth.userId) throw badRequest("自分自身のアカウントはここでは変更できません");
       try {
         await c.env.DB.batch([
           c.env.DB.prepare("UPDATE users SET login_id = ? WHERE id = ?").bind(loginId, userId),

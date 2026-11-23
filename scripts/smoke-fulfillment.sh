@@ -63,6 +63,26 @@ req $MGR2 GET /api/catalog/$SB/products; check "共同の責任者も他店舗�
 req $MGR GET /api/shops/$SA/staff; expect "スタッフ一覧に責任者2人+店員1人" 3 "$(jget "['staff'].__len__()")"
 req $MGRB POST /api/shops/$SA/staff '{"loginId":"xx1","password":"mgrpass456","nickname":"x","role":"SHOP_MANAGER"}'; check "他店舗の責任者は登録できない" 403
 req $CLERK POST /api/shops/$SA/staff '{"loginId":"xx2","password":"mgrpass456","nickname":"x","role":"SHOP_MANAGER"}'; check "店員は登録できない" 403
+M2ID=$(sqlv "SELECT id FROM users WHERE login_id='mgr-a2'"); M1ID=$(sqlv "SELECT id FROM users WHERE login_id='mgr-a'")
+req $MGR POST /api/shops/$SA/staff/$M2ID/reset-password '{"password":"mgrpass789"}'; check "責任者が共同責任者のパスワードを再設定" 200
+req $MGR2 GET /api/auth/me; check "再設定で共同責任者のセッションは切れる" 401
+req $MGR2 POST /api/auth/login '{"loginId":"mgr-a2","password":"mgrpass789"}'; check "新しいパスワードでログイン" 200
+req $MGR PATCH /api/shops/$SA/staff/$M2ID/login-id '{"loginId":"mgr-a3"}'; check "共同責任者のID変更" 200
+req $MGR2 POST /api/auth/login '{"loginId":"mgr-a3","password":"mgrpass789"}'; check "新IDでログイン" 200
+req $MGR2 POST /api/shops/$SA/staff/$M1ID/reset-password '{"password":"hijack1234"}'; check "共同責任者側からも他の責任者を再設定できる(対等)" 200
+req $MGR POST /api/auth/login '{"loginId":"mgr-a","password":"mgrpass123"}'; check "元の責任者はログインし直せない(パスワードが変わった)" 401
+req $MGR POST /api/auth/login '{"loginId":"mgr-a","password":"hijack1234"}'; check "変更後のパスワードで入れる" 200
+req $MGR POST /api/shops/$SA/staff/$M1ID/reset-password '{"password":"mgrpass123"}'; check "自分自身はここでは変更不可" 400
+req $MGR PATCH /api/shops/$SA/staff/$M1ID/status '{"status":"SUSPENDED"}'; check "自分自身は停止できない" 400
+req $MGRB POST /api/shops/$SA/staff/$M2ID/reset-password '{"password":"hijack1234"}'; check "他店舗の責任者は共同責任者を操作できない" 403
+req $CLERK POST /api/shops/$SA/staff/$M2ID/reset-password '{"password":"hijack1234"}'; check "店員は操作できない" 403
+req $MGR PATCH /api/shops/$SA/staff/$M2ID/status '{"status":"SUSPENDED"}'; check "共同責任者を停止" 200
+req $MGR2 POST /api/auth/login '{"loginId":"mgr-a3","password":"mgrpass789"}'; check "停止中はログインできない" 401
+req $MGR PATCH /api/shops/$SA/staff/$M2ID/status '{"status":"ACTIVE"}'; check "再開" 200
+req $MGR2 POST /api/auth/login '{"loginId":"mgr-a3","password":"mgrpass789"}'; check "再開後はログインできる" 200
+req $MGR POST /api/auth/login '{"loginId":"mgr-a","password":"hijack1234"}'; check "元の責任者に戻す" 200
+req $ADMIN POST /api/admin/users/$M1ID/reset-password '{"password":"mgrpass123"}' >/dev/null
+req $MGR POST /api/auth/login '{"loginId":"mgr-a","password":"mgrpass123"}'; check "管理者が責任者のパスワードを戻せる" 200
 
 echo "== 受付担当者のID/パスワード =="
 req $ADMIN POST /api/admin/users/reception '{"nickname":"受付A","loginId":"recep-a","password":"recepass123"}'; check "ID付きで受付を登録" 201; RID=$(jget "['userId']")
