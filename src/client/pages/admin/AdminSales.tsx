@@ -65,6 +65,7 @@ export function AdminSales() {
                       <p className="text-xs text-muted-foreground">
                         {s.orders}件 ・ 支払 {money(s.paidTotal)} ・ 返金 {money(s.refundedTotal)}
                         {s.discountTotal > 0 ? ` ・ 割引 ${money(s.discountTotal)}` : ""}
+                        {s.gross ? ` ・ 粗利 ${money(s.gross.profit)}${s.gross.margin !== null ? `(${s.gross.margin}%)` : ""}` : ""}
                       </p>
                     </div>
                     <div className="shrink-0 text-right">
@@ -83,7 +84,10 @@ export function AdminSales() {
                 </div>
               ))}
               <div className={cn("flex items-center justify-between pt-3 text-sm font-bold")}>
-                <span>全店舗の合計 ・ {r.totals.orders}件</span>
+                <span>
+                  全店舗の合計 ・ {r.totals.orders}件
+                  {r.totals.gross ? ` ・ 粗利 ${money(r.totals.gross.profit)}(原価入力分)` : ""}
+                </span>
                 <span className="text-xl font-extrabold tracking-tight">{money(r.totals.netSales)}</span>
               </div>
             </CardContent>

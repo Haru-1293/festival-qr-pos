@@ -71,6 +71,7 @@ export function ShopSales({ shopId, period: fixedPeriod, hideSummary }: { shopId
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {r.quantity}個{r.discount > 0 ? ` ・ 割引 ${money(r.discount)}` : ""}
+                  {r.cost !== null && r.cost !== undefined && r.costSales !== null && r.costSales !== undefined && ` ・ 粗利 ${money(r.costSales - r.cost)}`}
                 </p>
               </div>
               <p className="shrink-0 font-bold">{money(r.paid)}</p>
@@ -82,7 +83,7 @@ export function ShopSales({ shopId, period: fixedPeriod, hideSummary }: { shopId
               <span>{money(paid)}</span>
             </div>
           )}
-          <p className="pt-3 text-xs text-muted-foreground">支払額ベースです(返金は含みません)。返金を引いた純売上は全体管理者の「売上」で確認できます。</p>
+          <p className="pt-3 text-xs text-muted-foreground">金額は支払額ベースです(返金は含みません)。粗利は、原価を入力した商品の売上(返金を引いたあと)から原価を引いた額です。</p>
         </CardContent>
       </Card>
     </div>

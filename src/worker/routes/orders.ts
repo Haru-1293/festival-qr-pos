@@ -3,12 +3,17 @@ import { z } from "zod";
 import type { FulfillmentStatus, TrackedOrderDto } from "@shared/api";
 import type { AppEnv } from "../env";
 import { auditStmtIfExists } from "../lib/audit";
-import { notFound } from "../lib/errors";
+import { badRequest, forbidden, notFound } from "../lib/errors";
+import { orderNo } from "../lib/order";
+import { performRefund } from "./refunds";
 import { zv as zValidator } from "../lib/validate";
 import { assertShopAccess, requireAuth, requireRole } from "../middleware/auth";
 
 const shopParam = zValidator("param", z.object({ shopId: z.string().length(26) }));
 const orderParam = zValidator("param", z.object({ shopId: z.string().length(26), orderId: z.string().length(26) }));
+
+/** 店員が取り消せるのは、支払いから この時間以内の注文だけ(店舗責任者・全体管理者は期限なし) */
+export const CLERK_CANCEL_WINDOW_MS = 2 * 3600_000;
 
 /** 注文ステータス(調理中・提供可能)。店員・店舗責任者が自店舗の分を扱う */
 export const orderRoutes = new Hono<AppEnv>()
@@ -69,4 +74,73 @@ export const orderRoutes = new Hono<AppEnv>()
     ]);
     if ((res[0].meta.changes ?? 0) === 0) throw notFound("注文が見つかりません");
     return c.json({ ok: true });
-  });
+  })
+  // 最近の注文(取消しの対象を探す用)。支払いから2時間以内で、まだ取り消していないもの。新しい順
+  .get("/:shopId/recent", shopParam, async (c) => {
+    const auth = requireAuth(c);
+    const { shopId } = c.req.valid("param");
+    assertShopAccess(auth, shopId);
+    const since = Date.now() - CLERK_CANCEL_WINDOW_MS;
+    const { results } = await c.env.DB
+      .prepare(
+        `SELECT o.id, o.paid_at, o.total_paid, o.refunded_total, t.call_no, t.status AS tstatus,
+                (SELECT group_concat(name_snapshot || '×' || quantity, ' / ') FROM order_lines l WHERE l.order_id = o.id) AS items
+           FROM orders o LEFT JOIN order_tracking t ON t.order_id = o.id
+          WHERE o.shop_id = ? AND o.paid_at >= ? AND o.refunded_total = 0 ORDER BY o.paid_at DESC LIMIT 50`,
+      )
+      .bind(shopId, since)
+      .all<{ id: string; paid_at: number; total_paid: number; refunded_total: number; call_no: number | null; tstatus: FulfillmentStatus | null; items: string | null }>();
+    c.header("Cache-Control", "no-store");
+    return c.json({
+      orders: results.map((r) => ({
+        orderId: r.id,
+        orderNo: orderNo(r.id),
+        paidAt: r.paid_at,
+        total: r.total_paid,
+        callNo: r.call_no,
+        status: r.tstatus,
+        items: r.items,
+      })),
+    });
+  })
+  // 注文の取消し(在庫切れなどで受けた注文を提供できないとき)。全額をお客様のウォレットへ戻す。理由は必須で、監査ログに残る。
+  //  取り消せるのは、まだ返金のない注文で、受け渡し済みでないもの。店員は支払いから2時間以内の注文だけ。
+  .post(
+    "/:shopId/:orderId/cancel",
+    orderParam,
+    zValidator(
+      "json",
+      z.object({
+        requestId: z.string().min(16).max(64).regex(/^[A-Za-z0-9_-]+$/),
+        reason: z.string().trim().min(1, "取消しの理由を入力してください").max(200),
+        /** 商品を在庫へ戻すか。在庫が足りなくて作れなかったときは戻さない */
+        restoreStock: z.boolean(),
+      }),
+    ),
+    async (c) => {
+      const auth = requireAuth(c);
+      const { shopId, orderId } = c.req.valid("param");
+      assertShopAccess(auth, shopId);
+      const b = c.req.valid("json");
+      const db = c.env.DB;
+      const cur = await db.prepare("SELECT total_paid FROM orders WHERE id = ? AND shop_id = ?").bind(orderId, shopId).first<{ total_paid: number }>();
+      if (!cur) throw notFound("注文が見つかりません");
+      const out = await performRefund(
+        db,
+        auth,
+        orderId,
+        { requestId: b.requestId, kind: "FULL", reason: b.reason, restoreStock: b.restoreStock, restoreCoupon: true, expectedAmount: Math.max(1, cur.total_paid) },
+        {
+          cancel: true,
+          checkOrder: async (o) => {
+            if (o.refunded_total > 0) throw badRequest("この注文はすでに返金・取消しされています", "ALREADY_REFUNDED");
+            if (auth.role === "CLERK" && Date.now() - o.paid_at > CLERK_CANCEL_WINDOW_MS)
+              throw forbidden("支払いから時間がたっているため、店員は取り消せません。店舗責任者に依頼してください", "CANCEL_WINDOW_PASSED");
+            const t = await db.prepare("SELECT status FROM order_tracking WHERE order_id = ?").bind(orderId).first<{ status: string }>();
+            if (t?.status === "DONE") throw badRequest("受け渡し済みの注文は取り消せません。返金は店舗責任者が行います", "ORDER_DELIVERED");
+          },
+        },
+      );
+      return c.json(out.result, out.created ? 201 : 200);
+    },
+  );

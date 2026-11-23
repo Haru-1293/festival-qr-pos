@@ -33,3 +33,12 @@ export function refundAmountForLine(
   if (remainQty <= 0 || qty >= remainQty) return remainPaid;
   return Math.floor((remainPaid * qty) / remainQty);
 }
+
+/**
+ * 商品ごとの「返金率(%)」での返金額。その行の実支払額に率を掛けて切り捨て、まだ返金していない残りが上限。
+ * 数量は動かさない(率での返金は値引きと同じ扱いで、在庫は戻さない)。
+ */
+export function refundAmountForPercent(l: { linePaid: number; refundedAmount: number }, percent: number): number {
+  const remain = l.linePaid - l.refundedAmount;
+  return Math.max(0, Math.min(remain, Math.floor((l.linePaid * percent) / 100)));
+}

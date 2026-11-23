@@ -93,6 +93,13 @@ export function ShopDetailView({ shopId, backTo }: { shopId: string; backTo?: st
           <Stat label="支払額" value={money(s.paidTotal)} sub={`割引前 ${money(s.subtotal)}`} />
           <Stat label="返金" value={money(s.refundedTotal)} />
           <Stat label="割引" value={money(s.discountTotal)} sub={sum.bySource.map((b) => `${SOURCE[b.source]} ${b.orders}件`).join(" ・ ") || undefined} />
+          {s.gross && (
+            <Stat
+              label="粗利(原価を入力した商品)"
+              value={money(s.gross.profit)}
+              sub={`${s.gross.margin !== null ? `粗利率 ${s.gross.margin}% ・ ` : ""}原価 ${money(s.gross.cost)}${s.gross.coverage !== null ? ` ・ 売上の${s.gross.coverage}%が対象` : ""}`}
+            />
+          )}
         </div>
       )}
 

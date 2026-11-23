@@ -482,8 +482,10 @@ export const posRoutes = new Hono<AppEnv>()
           db
             .prepare(
               `INSERT INTO order_lines (id, order_id, line_no, kind, product_id, set_id, name_snapshot, unit_price, quantity, surcharge_total, line_subtotal, discount_allocated, line_paid,
-                                        list_unit_price, price_cut_id, price_cut_name)
-               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE ${orderExists}`,
+                                        list_unit_price, price_cut_id, price_cut_name, cost_total)
+               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                      CASE WHEN ? = 'PRODUCT' THEN (SELECT cost * ? FROM products WHERE id = ?) END
+                WHERE ${orderExists}`,
             )
             .bind(
               lineId, orderId, i + 1, l.kind,
@@ -492,6 +494,7 @@ export const posRoutes = new Hono<AppEnv>()
               l.name, l.unitPrice, l.quantity, l.surchargeTotal, l.lineTotal, l.discountAllocated, l.lineTotal - l.discountAllocated, l.listUnitPrice,
               discounted ? (quote.cut?.id ?? null) : null,
               discounted ? (quote.cut?.name ?? null) : null,
+              l.kind, l.quantity, l.kind === "PRODUCT" ? l.productId : null,
               orderId,
             ),
         );
@@ -504,6 +507,19 @@ export const posRoutes = new Hono<AppEnv>()
                  SELECT ?, ?, ?, ?, ?, ?, ? WHERE ${orderExists}`,
               )
               .bind(newId(now), lineId, r.segmentName, r.productId, r.name, r.count * l.quantity, r.surcharge, orderId),
+          );
+        }
+        // セットの原価 = 内訳商品の原価の合計(1つでも原価が未入力なら不明のまま)
+        if (l.kind === "SET") {
+          stmts.push(
+            db
+              .prepare(
+                `UPDATE order_lines SET cost_total = (
+                   SELECT CASE WHEN COUNT(*) > 0 AND COUNT(p.cost) = COUNT(*) THEN SUM(p.cost * c.quantity) END
+                     FROM order_line_components c JOIN products p ON p.id = c.product_id WHERE c.order_line_id = ?)
+                 WHERE id = ? AND ${orderExists}`,
+              )
+              .bind(lineId, lineId, orderId),
           );
         }
       });

@@ -1,7 +1,9 @@
 import { ArrowLeft, Minus, Plus, Search } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import type { OrderDetail, OrderStatus, OrderSummary, RefundResult } from "@shared/api";
-import { refundAmountForLine } from "@shared/pricing";
+import type { OrderDetail, OrderStatus, OrderSummary, ProductDto, RefundResult } from "@shared/api";
+import { refundAmountForLine, refundAmountForPercent } from "@shared/pricing";
+import { PeriodPicker, type Period } from "@/components/PeriodPicker";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ErrorText, Field } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,12 @@ export function RefundManager({ shopId }: { shopId: string }) {
   const isAdmin = me?.user.role === "ADMIN";
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [q, setQ] = useState("");
+  const [productId, setProductId] = useState("ALL");
+  const [period, setPeriod] = useState<Period>({});
+  const [state, setState] = useState("any");
+  const [products, setProducts] = useState<ProductDto[]>([]);
+  const [next, setNext] = useState<number | null>(null);
+  const [pct, setPct] = useState<Record<string, number>>({});
   const [openId, setOpenId] = useState<string | null>(null);
   const [detail, setDetail] = useState<OrderDetail | null>(null);
   const [mode, setMode] = useState<Mode>("PARTIAL");
@@ -45,17 +53,33 @@ export function RefundManager({ shopId }: { shopId: string }) {
   const reqId = useRequestId();
 
   const loadList = useCallback(
-    (query = q) =>
+    (more = false) =>
       list.run(async () => {
-        setOrders((await api<{ orders: OrderSummary[] }>(`/refunds/shops/${shopId}/orders?q=${encodeURIComponent(query.trim())}`)).orders);
+        const p = new URLSearchParams();
+        if (q.trim()) p.set("q", q.trim());
+        if (productId !== "ALL") p.set("productId", productId);
+        if (period.from !== undefined) p.set("from", String(period.from));
+        if (period.to !== undefined) p.set("to", String(period.to));
+        if (state !== "any") p.set("state", state);
+        if (more && next !== null) p.set("before", String(next));
+        const r = await api<{ orders: OrderSummary[]; next: number | null }>(`/refunds/shops/${shopId}/orders?${p}`);
+        setOrders((cur) => (more ? [...cur, ...r.orders] : r.orders));
+        setNext(r.next);
       }),
+    // 検索条件は「検索」ボタンで反映する
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [shopId],
+    [shopId, q, productId, period, state, next],
   );
   useEffect(() => {
     setOpenId(null);
     setDetail(null);
-    void loadList("");
+    setProductId("ALL");
+    void api<{ products: ProductDto[] }>(`/catalog/${shopId}/products`).then((r) => setProducts(r.products)).catch(() => undefined);
+    void list.run(async () => {
+      const r = await api<{ orders: OrderSummary[]; next: number | null }>(`/refunds/shops/${shopId}/orders`);
+      setOrders(r.orders);
+      setNext(r.next);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shopId]);
 
@@ -64,6 +88,7 @@ export function RefundManager({ shopId }: { shopId: string }) {
     setDone(null);
     setConfirming(false);
     setQty({});
+    setPct({});
     setRestore({});
     setArbitrary("");
     setReason("");
@@ -85,15 +110,46 @@ export function RefundManager({ shopId }: { shopId: string }) {
     return (
       <div className="flex flex-col gap-3">
         <form
-          className="flex gap-2"
+          className="flex flex-col gap-2"
           onSubmit={(e: FormEvent) => {
             e.preventDefault();
             void loadList();
           }}
         >
-          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="取引番号(例: WASDGSC3)" maxLength={20} />
-          <Button type="submit" variant="outline" aria-label="検索">
-            <Search />
+          <div className="flex gap-2">
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="取引番号(例: WASDGSC3)" maxLength={20} />
+            <Button type="submit" variant="outline" aria-label="検索">
+              <Search />
+            </Button>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Select value={productId} onValueChange={setProductId}>
+              <SelectTrigger aria-label="商品で絞り込む">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">すべての商品</SelectItem>
+                {products.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={state} onValueChange={setState}>
+              <SelectTrigger aria-label="返金の状態">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="any">返金の状態: すべて</SelectItem>
+                <SelectItem value="refundable">まだ返金できるもの</SelectItem>
+                <SelectItem value="refunded">返金のあるもの</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <PeriodPicker withTime onChange={setPeriod} />
+          <Button type="submit" disabled={list.pending}>
+            この条件で検索
           </Button>
         </form>
         <ErrorText message={list.error} />
@@ -108,7 +164,7 @@ export function RefundManager({ shopId }: { shopId: string }) {
                 <p className="font-bold">{money(o.total)}</p>
               </div>
               <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>{o.customerNickname ?? "お客様"}</span>
+                <span className="min-w-0 truncate">{o.items ?? (o.customerNickname ?? "お客様")}</span>
                 {o.status === "PAID" ? (
                   <span>{STATUS_LABEL.PAID}</span>
                 ) : (
@@ -120,6 +176,11 @@ export function RefundManager({ shopId }: { shopId: string }) {
             </Card>
           </button>
         ))}
+        {next !== null && (
+          <Button variant="outline" disabled={list.pending} onClick={() => void loadList(true)}>
+            さらに読み込む
+          </Button>
+        )}
       </div>
     );
   }
@@ -131,16 +192,21 @@ export function RefundManager({ shopId }: { shopId: string }) {
     .map((l) => ({
       l,
       n: qty[l.id] ?? 0,
+      p: pct[l.id] ?? 0, // 1〜99 のときは返金率で返金する
       left: l.quantity - l.refundedQuantity,
     }))
-    .filter((x) => x.n > 0)
-    .map((x) => ({
-      ...x,
-      amount: refundAmountForLine(x.l, x.n),
-      restore: restore[x.l.id] ?? true,
-    }));
+    .filter((x) => x.n > 0 || (x.p > 0 && x.p < 100))
+    .map((x) => {
+      const byPercent = x.p > 0 && x.p < 100;
+      return {
+        ...x,
+        byPercent,
+        amount: byPercent ? refundAmountForPercent(x.l, x.p) : refundAmountForLine(x.l, x.n),
+        restore: byPercent ? false : (restore[x.l.id] ?? true),
+      };
+    });
   const amount = mode === "FULL" ? detail.total : mode === "ARBITRARY" ? Number(arbitrary || 0) : picks.reduce((s, p) => s + p.amount, 0);
-  const valid = amount > 0 && amount <= detail.refundable && reason.trim().length > 0 && (mode !== "PARTIAL" || picks.length > 0);
+  const valid = amount > 0 && picks.every((p) => p.amount > 0) && amount <= detail.refundable && reason.trim().length > 0 && (mode !== "PARTIAL" || picks.length > 0);
 
   const submit = () => {
     void op.run(async () => {
@@ -154,8 +220,9 @@ export function RefundManager({ shopId }: { shopId: string }) {
             ? {
                 lines: picks.map((p) => ({
                   orderLineId: p.l.id,
-                  quantity: p.n,
+                  quantity: p.byPercent ? 1 : p.n,
                   restoreStock: p.restore,
+                  ...(p.byPercent ? { percent: p.p } : {}),
                 })),
               }
             : {}),
@@ -265,10 +332,34 @@ export function RefundManager({ shopId }: { shopId: string }) {
                             <Minus />
                           </Button>
                           <span className="w-7 text-center text-lg font-bold">{n}</span>
-                          <Button size="icon" variant="outline" aria-label="増やす" disabled={n >= left} onClick={() => setQty({ ...qty, [l.id]: n + 1 })}>
+                          <Button size="icon" variant="outline" aria-label="増やす" disabled={n >= left} onClick={() => { setQty({ ...qty, [l.id]: n + 1 }); setPct({ ...pct, [l.id]: 0 }); }}>
                             <Plus />
                           </Button>
                         </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                        <span className="text-muted-foreground">または 返金率</span>
+                        <Input
+                          inputMode="numeric"
+                          aria-label={`${l.name}の返金率(%)`}
+                          className="h-8 w-16 px-2 text-right"
+                          placeholder="例: 50"
+                          value={pct[l.id] ? String(pct[l.id]) : ""}
+                          onChange={(e) => {
+                            const v = Math.min(99, Number(e.target.value.replace(/[^0-9]/g, "")) || 0);
+                            setPct({ ...pct, [l.id]: v });
+                            if (v > 0) setQty({ ...qty, [l.id]: 0 });
+                          }}
+                        />
+                        <span className="text-muted-foreground">%</span>
+                        {[10, 30, 50].map((v) => (
+                          <button key={v} type="button" className="h-7 rounded-full bg-accent px-2.5 font-semibold" onClick={() => { setPct({ ...pct, [l.id]: v }); setQty({ ...qty, [l.id]: 0 }); }}>
+                            {v}%
+                          </button>
+                        ))}
+                        {(pct[l.id] ?? 0) > 0 && (
+                          <span className="font-semibold">= {money(refundAmountForPercent(l, pct[l.id]))}(数量・在庫は動きません)</span>
+                        )}
                       </div>
                       {n > 0 && (
                         <label className="flex items-center gap-2 text-xs">
@@ -333,7 +424,7 @@ export function RefundManager({ shopId }: { shopId: string }) {
                 {mode === "PARTIAL" &&
                   picks.map((p) => (
                     <p key={p.l.id}>
-                      ・{p.l.name} × {p.n}({money(p.amount)}){p.restore ? " 在庫に戻す" : " 在庫は戻さない"}
+                      ・{p.l.name} {p.byPercent ? `の ${p.p}%` : `× ${p.n}`}({money(p.amount)}){p.byPercent ? "" : p.restore ? " 在庫に戻す" : " 在庫は戻さない"}
                     </p>
                   ))}
                 {mode === "FULL" && <p>・全商品{restoreAll ? "(在庫に戻す)" : "(在庫は戻さない)"}</p>}
@@ -383,12 +474,12 @@ export function RefundManager({ shopId }: { shopId: string }) {
                   <span className="font-bold">{money(r.amount)}</span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  {r.kind === "FULL" ? "全額" : r.kind === "ARBITRARY" ? "任意金額" : "商品を選んで"} ・ {r.reason} ・ {r.operatorNickname ?? "-"}
+                  {r.cancel ? "注文取消し" : r.kind === "FULL" ? "全額" : r.kind === "ARBITRARY" ? "任意金額" : "商品を選んで"} ・ {r.reason} ・ {r.operatorNickname ?? "-"}
                   {r.couponRestored && " ・ クーポンを戻した"}
                 </p>
                 {r.lines.map((x, i) => (
                   <p key={i} className="text-xs text-muted-foreground">
-                    ・{x.name} × {x.quantity}({money(x.amount)}){x.restoreStock ? " 在庫に戻した" : ""}
+                    ・{x.name} {x.percent !== null ? `の ${x.percent}%` : `× ${x.quantity}`}({money(x.amount)}){x.restoreStock ? " 在庫に戻した" : ""}
                   </p>
                 ))}
               </div>

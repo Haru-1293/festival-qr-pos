@@ -1,4 +1,5 @@
 import {
+  Ban,
   BarChart3,
   Banknote,
   Boxes,
@@ -44,6 +45,7 @@ const CustomerHome = lazy(() => import("@/pages/my/CustomerHome").then((m) => ({
 const PosCatalog = lazy(() => import("@/pages/pos/PosCatalog").then((m) => ({ default: m.PosCatalog })));
 const CashPanel = lazy(() => import("@/pages/reception/CashPanel").then((m) => ({ default: m.CashPanel })));
 const ChargePanel = lazy(() => import("@/pages/reception/ChargePanel").then((m) => ({ default: m.ChargePanel })));
+const OrderCancel = lazy(() => import("@/pages/shop/OrderCancel").then((m) => ({ default: m.OrderCancel })));
 const OrdersBoard = lazy(() => import("@/pages/shop/OrdersBoard").then((m) => ({ default: m.OrdersBoard })));
 const PriceCutManager = lazy(() => import("@/pages/shop/PriceCutManager").then((m) => ({ default: m.PriceCutManager })));
 const ProductManager = lazy(() => import("@/pages/shop/ProductManager").then((m) => ({ default: m.ProductManager })));
@@ -81,6 +83,7 @@ const SHOP_NAV: NavItem[] = [
   { to: "/shop", label: "売上", icon: BarChart3, end: true },
   { to: "/shop/register", label: "レジ", icon: Calculator },
   { to: "/shop/orders", label: "注文ステータス", icon: ChefHat },
+  { to: "/shop/cancel", label: "注文取消し", icon: Ban },
   { to: "/shop/products", label: "商品", icon: Package },
   { to: "/shop/sets", label: "セット", icon: Layers },
   { to: "/shop/price-cuts", label: "値下げ", icon: Tag },
@@ -92,6 +95,7 @@ const SHOP_NAV: NavItem[] = [
 const CLERK_NAV: NavItem[] = [
   { to: "/clerk", label: "レジ", icon: Calculator, end: true },
   { to: "/clerk/orders", label: "注文ステータス", icon: ChefHat },
+  { to: "/clerk/cancel", label: "注文取消し", icon: Ban },
   { to: "/clerk/stock", label: "在庫", icon: Boxes },
 ];
 const RECEPTION_NAV: NavItem[] = [
@@ -265,6 +269,7 @@ export default function App() {
                 />
                 <Route path="register" element={<WithShop>{(id) => <PosCatalog shopId={id} />}</WithShop>} />
                 <Route path="orders" element={<WithShop>{(id) => <OrdersBoard shopId={id} />}</WithShop>} />
+                <Route path="cancel" element={<WithShop>{(id) => <OrderCancel shopId={id} />}</WithShop>} />
                 <Route
                   path="products"
                   element={
@@ -351,6 +356,7 @@ export default function App() {
               >
                 <Route index element={<WithShop>{(id) => <PosCatalog shopId={id} />}</WithShop>} />
                 <Route path="orders" element={<WithShop>{(id) => <OrdersBoard shopId={id} />}</WithShop>} />
+                <Route path="cancel" element={<WithShop>{(id) => <OrderCancel shopId={id} />}</WithShop>} />
                 <Route
                   path="stock"
                   element={

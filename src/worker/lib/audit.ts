@@ -18,10 +18,10 @@ export interface AuditEntry {
 export function auditStmt(db: D1Database, e: AuditEntry): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO audit_logs (id, actor_user_id, actor_role, action, target_type, target_id, before_json, after_json, reason, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO audit_logs (id, actor_user_id, actor_role, action, target_type, target_id, before_json, after_json, reason, created_at, shop_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${SHOP_OF})`,
     )
-    .bind(...auditBindings(e));
+    .bind(...auditBindings(e), ...shopBindings(e));
 }
 
 /**
@@ -37,10 +37,27 @@ export function auditStmtIfExists(
 ): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO audit_logs (id, actor_user_id, actor_role, action, target_type, target_id, before_json, after_json, reason, created_at)
-       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (${existsSql})`,
+      `INSERT INTO audit_logs (id, actor_user_id, actor_role, action, target_type, target_id, before_json, after_json, reason, created_at, shop_id)
+       SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${SHOP_OF} WHERE EXISTS (${existsSql})`,
     )
-    .bind(...auditBindings(e), ...existsArgs);
+    .bind(...auditBindings(e), ...shopBindings(e), ...existsArgs);
+}
+
+/**
+ * 監査ログの店舗(絞り込み用)。対象が店舗・注文・商品などならその店舗、なければ操作者の所属店舗。
+ * 値は SQL の中で引くので、呼び出し側は何も渡さなくてよい。バインド値は shopBindings の6個。
+ */
+const SHOP_OF = `(SELECT COALESCE(
+    CASE ? WHEN 'shop' THEN ?
+      WHEN 'order' THEN (SELECT shop_id FROM orders WHERE id = ?)
+      WHEN 'product' THEN (SELECT shop_id FROM products WHERE id = ?)
+      WHEN 'payment_session' THEN (SELECT shop_id FROM payment_sessions WHERE id = ?)
+    END,
+    (SELECT shop_id FROM users WHERE id = ?)))`;
+
+function shopBindings(e: AuditEntry): unknown[] {
+  const t = e.targetId ?? null;
+  return [e.targetType ?? null, t, t, t, t, e.actor?.userId ?? null];
 }
 
 function auditBindings(e: AuditEntry): unknown[] {

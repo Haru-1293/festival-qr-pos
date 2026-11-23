@@ -18,6 +18,8 @@ const cutParam = zValidator("param", z.object({ shopId: id26, cutId: id26 }));
 const priceSchema = z.number().int("価格は整数で入力してください").min(0, "価格は0以上にしてください").max(10_000_000);
 const saleModeSchema = z.enum(["BOTH", "SINGLE_ONLY", "SET_ONLY"]);
 
+const costSchema = z.number().int("原価は整数で入力してください").min(0, "原価は0以上にしてください").max(10_000_000);
+
 const productBase = {
   name: z.string().trim().min(1, "商品名を入力してください").max(60, "商品名は60文字以内にしてください"),
   price: priceSchema.nullable(),
@@ -26,6 +28,8 @@ const productBase = {
   discountable: z.boolean(),
   sortOrder: z.number().int().min(0).max(100000),
   tagIds: z.array(id26).max(20),
+  /** 原価(任意)。未入力(null)の商品は粗利に含めない */
+  cost: costSchema.nullable().optional(),
 };
 
 /** 販売形態と価格の整合(セット限定以外は価格が必要) */
@@ -55,7 +59,11 @@ export const catalogRoutes = new Hono<AppEnv>()
     const { shopId } = c.req.valid("param");
     assertShopAccess(auth, shopId);
     const cut = await loadRunningCut(c.env.DB, shopId, Date.now());
-    const products: ProductDto[] = await loadProducts(c.env.DB, shopId, { cut, includeArchived: true });
+    const base = await loadProducts(c.env.DB, shopId, { cut, includeArchived: true });
+    // 原価はこの一覧(店舗責任者・全体管理者用)にだけ載せる。POS・お客様向けの一覧には出さない
+    const { results: costs } = await c.env.DB.prepare("SELECT id, cost FROM products WHERE shop_id = ?").bind(shopId).all<{ id: string; cost: number | null }>();
+    const costBy = new Map(costs.map((r) => [r.id, r.cost]));
+    const products: ProductDto[] = base.map((p) => ({ ...p, cost: costBy.get(p.id) ?? null }));
     return c.json({ products, cut });
   })
   .get("/:shopId/tags", shopParam, async (c) => {
@@ -143,10 +151,10 @@ export const catalogRoutes = new Hono<AppEnv>()
       await db.batch([
         db
           .prepare(
-            `INSERT INTO products (id, shop_id, name, price, description, sale_mode, status, manual_sold_out, track_stock, stock_qty, discountable, sort_order, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 0, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO products (id, shop_id, name, price, description, sale_mode, status, manual_sold_out, track_stock, stock_qty, discountable, sort_order, created_at, updated_at, cost)
+             VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 0, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .bind(id, shopId, b.name, b.price, b.description ?? null, b.saleMode, b.trackStock ? 1 : 0, qty, b.discountable ? 1 : 0, b.sortOrder, now, now),
+          .bind(id, shopId, b.name, b.price, b.description ?? null, b.saleMode, b.trackStock ? 1 : 0, qty, b.discountable ? 1 : 0, b.sortOrder, now, now, b.cost ?? null),
         ...[...new Set(b.tagIds)].map((t) => db.prepare("INSERT INTO product_tags (product_id, tag_id) VALUES (?, ?)").bind(id, t)),
         ...(qty && qty > 0
           ? [
@@ -158,7 +166,7 @@ export const catalogRoutes = new Hono<AppEnv>()
             ]
           : []),
         bumpCatalogStmt(db, shopId),
-        auditStmt(db, { actor: auth, action: "product.create", targetType: "product", targetId: id, after: { name: b.name, price: b.price, saleMode: b.saleMode } }),
+        auditStmt(db, { actor: auth, action: "product.create", targetType: "product", targetId: id, after: { name: b.name, price: b.price, cost: b.cost ?? null, saleMode: b.saleMode } }),
       ]);
       return c.json({ id }, 201);
     },
@@ -177,6 +185,7 @@ export const catalogRoutes = new Hono<AppEnv>()
         discountable: z.boolean().optional(),
         sortOrder: productBase.sortOrder.optional(),
         tagIds: productBase.tagIds.optional(),
+        cost: costSchema.nullable().optional(),
       }),
     ),
     async (c) => {
@@ -186,9 +195,9 @@ export const catalogRoutes = new Hono<AppEnv>()
       const b = c.req.valid("json");
       const db = c.env.DB;
       const cur = await db
-        .prepare("SELECT name, price, description, sale_mode, status, discountable, sort_order FROM products WHERE id = ? AND shop_id = ?")
+        .prepare("SELECT name, price, description, sale_mode, status, discountable, sort_order, cost FROM products WHERE id = ? AND shop_id = ?")
         .bind(productId, shopId)
-        .first<{ name: string; price: number | null; description: string | null; sale_mode: string; status: string; discountable: number; sort_order: number }>();
+        .first<{ name: string; price: number | null; description: string | null; sale_mode: string; status: string; discountable: number; sort_order: number; cost: number | null }>();
       if (!cur) throw notFound("商品が見つかりません");
       if (cur.status === "ARCHIVED" && b.status === undefined) throw badRequest("アーカイブ済みの商品は変更できません");
       const next = {
@@ -199,15 +208,16 @@ export const catalogRoutes = new Hono<AppEnv>()
         status: b.status ?? cur.status,
         discountable: b.discountable ?? cur.discountable === 1,
         sortOrder: b.sortOrder ?? cur.sort_order,
+        cost: b.cost === undefined ? cur.cost : b.cost,
       };
       assertPriceForMode(next.saleMode, next.price);
       if (b.tagIds) await assertTagsBelongToShop(db, shopId, b.tagIds);
       await db.batch([
         db
           .prepare(
-            `UPDATE products SET name = ?, price = ?, description = ?, sale_mode = ?, status = ?, discountable = ?, sort_order = ?, updated_at = ? WHERE id = ? AND shop_id = ?`,
+            `UPDATE products SET name = ?, price = ?, description = ?, sale_mode = ?, status = ?, discountable = ?, sort_order = ?, cost = ?, updated_at = ? WHERE id = ? AND shop_id = ?`,
           )
-          .bind(next.name, next.price, next.description, next.saleMode, next.status, next.discountable ? 1 : 0, next.sortOrder, Date.now(), productId, shopId),
+          .bind(next.name, next.price, next.description, next.saleMode, next.status, next.discountable ? 1 : 0, next.sortOrder, next.cost, Date.now(), productId, shopId),
         ...(b.tagIds
           ? [
               db.prepare("DELETE FROM product_tags WHERE product_id = ?").bind(productId),
@@ -220,8 +230,8 @@ export const catalogRoutes = new Hono<AppEnv>()
           action: b.status && b.status !== cur.status ? `product.${b.status.toLowerCase()}` : "product.update",
           targetType: "product",
           targetId: productId,
-          before: { name: cur.name, price: cur.price, saleMode: cur.sale_mode, status: cur.status },
-          after: { name: next.name, price: next.price, saleMode: next.saleMode, status: next.status },
+          before: { name: cur.name, price: cur.price, cost: cur.cost, saleMode: cur.sale_mode, status: cur.status },
+          after: { name: next.name, price: next.price, cost: next.cost, saleMode: next.saleMode, status: next.status },
         }),
       ]);
       return c.json({ ok: true });

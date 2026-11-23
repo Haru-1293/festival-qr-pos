@@ -33,6 +33,7 @@ interface Draft {
   tagIds: string[];
   trackStock: boolean;
   stockQty: string;
+  cost: string;
 }
 const EMPTY: Draft = {
   id: null,
@@ -45,6 +46,7 @@ const EMPTY: Draft = {
   tagIds: [],
   trackStock: false,
   stockQty: "",
+  cost: "",
 };
 const digits = (s: string) => s.replace(/[^0-9]/g, "");
 
@@ -86,6 +88,7 @@ export function ProductManager({ shopId }: { shopId: string }) {
       tagIds: p.tags.map((t) => t.id),
       trackStock: p.trackStock,
       stockQty: p.stockQty === null ? "" : String(p.stockQty),
+      cost: p.cost === null || p.cost === undefined ? "" : String(p.cost),
     });
 
   const save = (e: FormEvent) => {
@@ -100,6 +103,7 @@ export function ProductManager({ shopId }: { shopId: string }) {
         discountable: draft.discountable,
         sortOrder: Number(draft.sortOrder || 0),
         tagIds: draft.tagIds,
+        cost: draft.cost === "" ? null : Number(draft.cost),
       };
       if (draft.id) {
         await api(`/catalog/${shopId}/products/${draft.id}`, {
@@ -211,6 +215,9 @@ export function ProductManager({ shopId }: { shopId: string }) {
                   required={draft.saleMode !== "SET_ONLY"}
                   className="h-12 text-lg font-bold"
                 />
+              </Field>
+              <Field label="原価(任意)" hint="入力すると売上の画面に粗利が出ます。空欄の商品は粗利の計算に含めません">
+                <Input inputMode="numeric" value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: digits(e.target.value) })} />
               </Field>
               <Field label="説明(任意)">
                 <Input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} maxLength={300} />
@@ -336,6 +343,12 @@ export function ProductManager({ shopId }: { shopId: string }) {
                   </p>
                 </div>
                 <PriceView p={p} />
+                {p.cost !== null && p.cost !== undefined && (
+                  <p className="text-xs text-muted-foreground">
+                    原価 {money(p.cost)}
+                    {p.price !== null && p.price > 0 && ` ・ 粗利 ${money(p.price - p.cost)}(${Math.round(((p.price - p.cost) / p.price) * 100)}%)`}
+                  </p>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
                 {p.status === "STOPPED" && <Badge variant="warning">販売停止</Badge>}

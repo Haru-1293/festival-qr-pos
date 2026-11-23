@@ -142,7 +142,7 @@ echo "== CSV =="
 curl -s -D $TMP/h -o $TMP/sales.csv -b $ADMIN $BASE/api/reports/sales.csv
 expect "content-type" "text/csv; charset=utf-8" "$(grep -i '^content-type' $TMP/h | tr -d '\r' | cut -d' ' -f2-)"
 expect "BOM" "efbbbf" "$(head -c 3 $TMP/sales.csv | od -An -tx1 | tr -d " \n")"
-expect "合計行" "合計,3,1000,60,940,540,400" "$(tail -n 1 $TMP/sales.csv | tr -d '\r')"
+expect "合計行" "合計,3,1000,60,940,540,400,,," "$(tail -n 1 $TMP/sales.csv | tr -d '\r')"
 curl -s -o $TMP/orders.csv -b $MGR $BASE/api/reports/shops/$SA/orders.csv
 expect "注文CSVの行数(見出し+3)" 4 "$(wc -l < $TMP/orders.csv | tr -d ' ')"
 expect "式になる文字は無害化される" 1 "$(grep -c "'=1+1" $TMP/orders.csv)"
@@ -160,7 +160,7 @@ NEXT=$(jget "['next']"); [ "$NEXT" != "None" ] && echo "  ok  続きがある" &
 req $ADMIN GET "/api/reports/audit?limit=2&before=$NEXT"; check "続きを取得" 200
 req $MGR GET /api/reports/audit; check "責任者は監査ログを見られない" 403
 curl -s -o $TMP/audit.csv -b $ADMIN $BASE/api/reports/audit.csv
-expect "監査CSVに見出し" "日時(日本時間),操作者,役割,操作,対象の種類,対象ID,理由,変更前,変更後" "$(sed '1s/^\xEF\xBB\xBF//' $TMP/audit.csv | head -n 1 | tr -d '\r')"
+expect "監査CSVに見出し" "日時(日本時間),操作者,役割,店舗,操作,対象の種類,対象ID,理由,変更前,変更後" "$(sed '1s/^\xEF\xBB\xBF//' $TMP/audit.csv | head -n 1 | tr -d '\r')"
 
 echo "== 緊急停止 =="
 req $ADMIN GET /api/settings/public; expect "初期は停止していない" False "$(jget "['emergency']['on']")"

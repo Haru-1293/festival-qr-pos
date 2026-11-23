@@ -186,6 +186,8 @@ export interface ProductDto {
   discountable: boolean;
   sortOrder: number;
   tags: { id: string; name: string; color: string | null }[];
+  /** 原価(任意)。店舗責任者・全体管理者向けの一覧にだけ入る。未入力は null */
+  cost?: number | null;
 }
 
 export type PriceCutState = "RUNNING" | "SCHEDULED" | "ENDED" | "STOPPED";
@@ -388,6 +390,8 @@ export interface OrderSummary {
   total: number;
   refundedTotal: number;
   status: OrderStatus;
+  /** 商品の要約(一覧の検索結果用) */
+  items?: string | null;
 }
 
 export interface OrderLineDto {
@@ -414,7 +418,9 @@ export interface RefundDto {
   operatorNickname: string | null;
   createdAt: number;
   couponRestored: boolean;
-  lines: { name: string; quantity: number; amount: number; restoreStock: boolean }[];
+  /** 店員の「注文取消し」による全額返金 */
+  cancel: boolean;
+  lines: { name: string; quantity: number; amount: number; restoreStock: boolean; percent: number | null }[];
 }
 
 export interface OrderDetail extends OrderSummary {
@@ -589,6 +595,22 @@ export interface SalesRow {
   refundedTotal: number;
   /** 精算対象額 = 支払額 - 返金額 */
   netSales: number;
+  /** 粗利(原価が入力された商品だけ)。原価の入力が1つもなければ null */
+  gross?: GrossProfit | null;
+}
+/**
+ * 粗利。原価が入力されている商品の行だけで計算する(未入力の商品は含めない)。
+ *  売上 = 支払額 - 返金額 / 原価 = 売れた数の原価(在庫へ戻した分と注文取消しの分は引く) / 粗利 = 売上 - 原価
+ */
+export interface GrossProfit {
+  /** 原価が入力されている商品の売上(返金を引いたあと) */
+  sales: number;
+  cost: number;
+  profit: number;
+  /** 粗利率(%)。売上が0なら null */
+  margin: number | null;
+  /** 純売上のうち原価が入力されている商品の割合(%)。低いと粗利は参考値 */
+  coverage: number | null;
 }
 export interface SalesReport {
   from: number;
@@ -627,9 +649,27 @@ export interface ProductSalesRow {
   gross: number;
   discount: number;
   paid: number;
+  /** 原価が入力されている分の売上(返金後)・原価。原価が未入力の商品は null */
+  costSales?: number | null;
+  cost?: number | null;
 }
+/** 監査ログの「種類」の絞り込み。prefixes は操作名の先頭一致(操作名は `refund.full` のように 分類.内容) */
+export const AUDIT_CATEGORIES = [
+  { key: "payment", label: "決済", prefixes: ["payment."] },
+  { key: "refund", label: "返金・注文取消し", prefixes: ["refund.", "order.cancel"] },
+  { key: "order", label: "注文の受け渡し状態", prefixes: ["order.preparing", "order.ready", "order.done"] },
+  { key: "catalog", label: "商品・在庫・セット・値下げ", prefixes: ["product.", "stock.", "tag.", "set.", "price_cut."] },
+  { key: "discount", label: "割引・クーポン", prefixes: ["discount.", "coupon."] },
+  { key: "cash", label: "受付・現金・カード", prefixes: ["cash.", "wallet.", "card.", "reception_qr.", "clerk_qr."] },
+  { key: "account", label: "ログイン・アカウント", prefixes: ["auth.", "account.", "user.", "setup."] },
+  { key: "settings", label: "設定・店舗", prefixes: ["settings.", "shop.", "emergency."] },
+] as const;
+export type AuditCategory = (typeof AUDIT_CATEGORIES)[number]["key"];
+
 export interface AuditEntryDto {
   id: string;
+  /** 操作者または対象の店舗(わかるもののみ) */
+  shopName?: string | null;
   createdAt: number;
   actorNickname: string | null;
   actorRole: string | null;
