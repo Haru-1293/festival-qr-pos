@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 
 /**
  * お客様の呼び出しボード(ログイン不要)。店頭のモニターに映す。
- * 「お呼びしています」(提供可能な番号)を大きく、「調理中」の番号を小さく出す。2.5秒ごとに更新。
+ * 白を基調に、右に「呼び出し中」(提供可能な番号)を大きく、左に「調理中・調理待ち」の番号を出す。2.5秒ごとに更新。
  */
 export function CallBoardPage() {
   const { shopId } = useParams();
@@ -41,30 +41,32 @@ export function CallBoardPage() {
   }, [shopId]);
 
   return (
-    <div className="flex min-h-dvh flex-col bg-neutral-900 text-white">
+    <div className="flex min-h-dvh flex-col bg-white text-neutral-900">
       <header className="bg-primary px-6 py-4 text-primary-foreground">
         <h1 className="text-2xl font-extrabold sm:text-4xl">{data?.shopName ?? "呼び出しボード"}</h1>
       </header>
-      {error && !data && <p className="p-10 text-center text-xl">{error}</p>}
+      {error && !data && <p className="p-10 text-center text-xl text-neutral-600">{error}</p>}
       {data && (
-        <div className="grid flex-1 gap-4 p-4 md:grid-cols-5">
-          <section className="flex flex-col gap-3 rounded-3xl bg-emerald-600/20 p-5 md:col-span-3" aria-label="お呼びしています">
-            <h2 className="text-2xl font-extrabold text-emerald-300 sm:text-3xl">できあがりました</h2>
-            <div className="flex flex-wrap content-start gap-3">
-              {data.ready.length === 0 && <p className="text-lg text-white/50">いまお呼びしている番号はありません</p>}
-              {data.ready.map((n) => (
-                <span key={n} className={cn("flex min-w-28 items-center justify-center rounded-2xl bg-emerald-500 px-5 py-3 text-6xl font-black text-white sm:text-8xl", fresh.has(n) && "animate-pulse ring-8 ring-white/70")}>
+        <div className="grid flex-1 gap-4 bg-white p-4 md:grid-cols-5">
+          {/* 左: 調理中・調理待ち(狭い画面では呼び出し中を先に出す) */}
+          <section className="order-2 flex flex-col gap-3 rounded-3xl border-2 border-amber-200 bg-amber-50 p-5 md:order-1 md:col-span-2" aria-label="調理中・調理待ち">
+            <h2 className="text-xl font-extrabold text-amber-700 sm:text-2xl">調理中・調理待ち</h2>
+            <div className="flex flex-wrap content-start gap-2">
+              {data.preparing.length === 0 && <p className="text-neutral-400">なし</p>}
+              {data.preparing.map((n) => (
+                <span key={n} className="flex min-w-16 items-center justify-center rounded-xl border border-amber-300 bg-white px-3 py-2 text-3xl font-bold text-neutral-800 sm:text-5xl">
                   {n}
                 </span>
               ))}
             </div>
           </section>
-          <section className="flex flex-col gap-3 rounded-3xl bg-white/5 p-5 md:col-span-2" aria-label="調理中">
-            <h2 className="text-xl font-bold text-amber-300 sm:text-2xl">ただいま調理中</h2>
-            <div className="flex flex-wrap content-start gap-2">
-              {data.preparing.length === 0 && <p className="text-white/50">なし</p>}
-              {data.preparing.map((n) => (
-                <span key={n} className="flex min-w-16 items-center justify-center rounded-xl bg-white/10 px-3 py-2 text-3xl font-bold sm:text-5xl">
+          {/* 右: 呼び出し中 */}
+          <section className="order-1 flex flex-col gap-3 rounded-3xl border-2 border-emerald-300 bg-emerald-50 p-5 md:order-2 md:col-span-3" aria-label="呼び出し中">
+            <h2 className="text-2xl font-extrabold text-emerald-700 sm:text-3xl">呼び出し中</h2>
+            <div className="flex flex-wrap content-start gap-3">
+              {data.ready.length === 0 && <p className="text-lg text-neutral-400">いまお呼びしている番号はありません</p>}
+              {data.ready.map((n) => (
+                <span key={n} className={cn("flex min-w-28 items-center justify-center rounded-2xl bg-emerald-600 px-5 py-3 text-6xl font-black text-white shadow-sm sm:text-8xl", fresh.has(n) && "animate-pulse ring-8 ring-emerald-300")}>
                   {n}
                 </span>
               ))}
