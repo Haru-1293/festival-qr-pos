@@ -375,18 +375,20 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
 }
 
 // ---------------------------------------------------------------- 一覧・操作
-const FILTERS: { id: CardStatus | ""; label: string }[] = [
+type Filter = CardStatus | "" | "EXPIRING";
+const FILTERS: { id: Filter; label: string }[] = [
   { id: "", label: "削除済み以外" },
   { id: "ISSUED", label: "未有効化" },
   { id: "ACTIVE", label: "有効" },
   { id: "SUSPENDED", label: "停止中" },
+  { id: "EXPIRING", label: "7日以内に期限" },
   { id: "EXPIRED", label: "期限切れ" },
   { id: "DELETED", label: "削除済み" },
 ];
 
 function CardList() {
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState<CardStatus | "">("");
+  const [status, setStatus] = useState<Filter>("");
   const [cards, setCards] = useState<CardDto[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -395,7 +397,8 @@ function CardList() {
     try {
       const params = new URLSearchParams();
       if (q.trim()) params.set("q", q.trim());
-      if (status) params.set("status", status);
+      if (status === "EXPIRING") params.set("expiring", "7");
+      else if (status) params.set("status", status);
       const r = await api<{ cards: CardDto[] }>(`/cards?${params}`);
       setCards(r.cards);
       setError(null);
@@ -479,7 +482,9 @@ function CardRow({ card: c, open, onToggle, onChanged }: { card: CardDto; open: 
           </p>
           <p className="text-xs text-muted-foreground">
             {c.balance !== null ? `残高 ${money(c.balance)} ・ ` : ""}
-            {c.expiresAt ? `期限 ${toDateInput(c.expiresAt)}` : ""}
+            {c.expiresAt
+              ? `期限 ${toDateInput(c.expiresAt)}${c.status === "ACTIVE" && c.expiresAt - Date.now() <= 7 * 86400000 && c.expiresAt > Date.now() ? `(あと${Math.ceil((c.expiresAt - Date.now()) / 86400000)}日)` : ""}`
+              : ""}
             {c.issueBatch ? ` ・ ${c.issueBatch}` : ""}
           </p>
         </div>

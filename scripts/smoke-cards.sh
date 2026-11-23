@@ -200,6 +200,10 @@ req $R1 POST /api/reception/payout "{\"lookupId\":\"$LE\",\"requestId\":\"$(rid)
 req $R1 POST /api/reception/payout "{\"lookupId\":\"$LE\",\"requestId\":\"$(rid)\",\"expectedBalance\":700,\"pin\":\"2222\"}"; check "期限切れでもPINがあれば残高を払い戻せる" 201
 expect "払戻し後の残高は0" 0 "$(dbq "SELECT balance FROM wallets WHERE id=(SELECT wallet_id FROM cards WHERE id='$C2')")"
 req $ADMIN GET "/api/cards?status=EXPIRED"; expect "期限切れの一覧" "C000002" "$(jget "['cards'][0]['displayNo']")"; expect "表示の状態" EXPIRED "$(jget "['cards'][0]['status']")"
+dbq "UPDATE cards SET expires_at = $(( $(date +%s) * 1000 + 3*86400000 )) WHERE id='$C2'" >/dev/null
+req $ADMIN GET "/api/cards?expiring=7"; check "期限が近いカードの一覧" 200; expect "3日後に切れるカードが出る" "C000002" "$(jget "['cards'][0]['displayNo']")"
+req $ADMIN GET "/api/cards?expiring=2"; expect "2日以内には出ない" 0 "$(jget "['cards'].__len__()")"
+req $ADMIN GET "/api/cards?expiring=0"; check "範囲外は400" 400
 dbq "UPDATE cards SET expires_at = $(( $(date +%s) * 1000 + 86400000 )) WHERE id='$C2'" >/dev/null
 dbq "UPDATE wallets SET expires_at = $(( $(date +%s) * 1000 + 86400000 )) WHERE id=(SELECT wallet_id FROM cards WHERE id='$C2')" >/dev/null
 

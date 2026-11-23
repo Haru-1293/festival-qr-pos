@@ -49,8 +49,8 @@ export const cardRoutes = new Hono<AppEnv>()
   .use("*", requireRole("ADMIN"))
 
   // 一覧・検索(ニックネーム・カード番号・発行バッチ)。同名の利用者は番号・残高・日時で見分ける
-  .get("/", zv("query", z.object({ q: z.string().trim().max(60).optional(), status: z.enum(["ISSUED", "ACTIVE", "SUSPENDED", "EXPIRED", "DELETED"]).optional() })), async (c) => {
-    const { q, status } = c.req.valid("query");
+  .get("/", zv("query", z.object({ q: z.string().trim().max(60).optional(), status: z.enum(["ISSUED", "ACTIVE", "SUSPENDED", "EXPIRED", "DELETED"]).optional(), expiring: z.coerce.number().int().min(1).max(60).optional() })), async (c) => {
+    const { q, status, expiring } = c.req.valid("query");
     const now = Date.now();
     const where: string[] = [];
     const args: (string | number)[] = [];
@@ -59,7 +59,11 @@ export const cardRoutes = new Hono<AppEnv>()
       where.push("(c.nickname LIKE ? ESCAPE '\\' OR c.display_no LIKE ? ESCAPE '\\' OR c.issue_batch LIKE ? ESCAPE '\\')");
       args.push(like, like, like);
     }
-    if (status === "EXPIRED") {
+    if (expiring) {
+      // 使えるカードのうち、あと○日以内に期限が来るもの(期限が近い順)
+      where.push("c.status IN ('ACTIVE','SUSPENDED') AND c.expires_at IS NOT NULL AND c.expires_at > ? AND c.expires_at <= ?");
+      args.push(now, now + expiring * 86_400_000);
+    } else if (status === "EXPIRED") {
       where.push("c.status IN ('ISSUED','ACTIVE','SUSPENDED') AND c.expires_at IS NOT NULL AND c.expires_at <= ?");
       args.push(now);
     } else if (status === "DELETED") where.push("c.status = 'DELETED'");
@@ -67,7 +71,7 @@ export const cardRoutes = new Hono<AppEnv>()
       where.push("c.status = ? AND (c.expires_at IS NULL OR c.expires_at > ?)");
       args.push(status, now);
     } else where.push("c.status <> 'DELETED'");
-    const { results } = await c.env.DB.prepare(`${CARD_SELECT} WHERE ${where.join(" AND ")} ORDER BY c.issued_at DESC, c.display_no DESC LIMIT 300`)
+    const { results } = await c.env.DB.prepare(`${CARD_SELECT} WHERE ${where.join(" AND ")} ORDER BY ${expiring ? "c.expires_at ASC," : ""} c.issued_at DESC, c.display_no DESC LIMIT 300`)
       .bind(...args)
       .all<CardRow>();
     const counts = await c.env.DB
