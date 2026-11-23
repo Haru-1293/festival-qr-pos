@@ -70,7 +70,7 @@ export const refundRoutes = new Hono<AppEnv>()
       const auth = requireAuth(c);
       const { shopId } = c.req.valid("param");
       assertShopAccess(auth, shopId);
-      const q = c.req.valid("query").q?.toUpperCase();
+      const q = c.req.valid("query").q?.toUpperCase().replace(/[%_]/g, "");
       const { results } = await c.env.DB
         .prepare(
           `SELECT o.id, o.paid_at, o.total_paid, o.refunded_total, o.status, u.nickname
