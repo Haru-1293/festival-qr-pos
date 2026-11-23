@@ -11,6 +11,9 @@ export function CustomerHome() {
   const { me, money, settings } = useAuth();
   if (!me) return null;
   const w = me.wallet;
+  const now = Date.now();
+  const expired = !!w?.expiresAt && w.expiresAt <= now;
+  const daysLeft = w?.expiresAt && !expired ? Math.ceil((w.expiresAt - now) / 86400000) : null;
   return (
     <Shell title="ホーム">
       <div className="flex flex-col gap-4">
@@ -23,11 +26,22 @@ export function CustomerHome() {
                 利用停止中です。受付にお問い合わせください
               </Badge>
             )}
-            {w?.expiresAt && <p className="mt-2 text-xs text-muted-foreground">有効期限: {formatDateTime(w.expiresAt)}</p>}
+            {expired && (
+              <Badge variant="warning" className="mt-2 h-auto whitespace-normal py-1">
+                有効期限が切れたため、お支払いにはご利用できません。残高は受付で払い戻しできます
+              </Badge>
+            )}
+            {w?.expiresAt && !expired && (
+              <p className={`mt-2 text-xs ${daysLeft !== null && daysLeft <= 7 ? "font-semibold text-destructive" : "text-muted-foreground"}`}>
+                有効期限: {formatDateTime(w.expiresAt)}
+                {daysLeft !== null && daysLeft <= 7 && `(あと${daysLeft}日。残高は期限までにお使いください)`}
+              </p>
+            )}
+            {expired && w?.expiresAt && <p className="mt-2 text-xs text-muted-foreground">有効期限: {formatDateTime(w.expiresAt)}</p>}
           </div>
           <CardContent className="text-sm text-muted-foreground">{settings.currency.description}</CardContent>
         </Card>
-        <PayQrCard disabled={w?.status !== "ACTIVE"} />
+        <PayQrCard disabled={w?.status !== "ACTIVE" || expired} />
         <HistoryCard balance={w?.balance} />
       </div>
     </Shell>

@@ -63,7 +63,7 @@ export interface WalletQrResponse {
 export interface LookupResponse {
   lookupId: string;
   expiresAt: number;
-  wallet: { id: string; nickname: string | null; balance: number; status: "ACTIVE" | "SUSPENDED" | "CLOSED" };
+  wallet: { id: string; nickname: string | null; balance: number; status: "ACTIVE" | "SUSPENDED" | "CLOSED"; /** 有効期限が切れている(チャージ・支払いはできない。払戻しだけできる) */ expired: boolean };
   /** 物理カードを読み取ったとき。払戻しにはPINが必要 */
   card?: { displayNo: string };
   yenPerUnit: number;

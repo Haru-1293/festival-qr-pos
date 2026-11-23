@@ -95,6 +95,11 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
   const units = lookup && cashValid ? cashToUnits(cashNum, lookup.yenPerUnit) : null;
   const payoutCash = lookup ? unitsToCash(lookup.wallet.balance, lookup.yenPerUnit) : null;
   const active = lookup?.wallet.status === "ACTIVE";
+  const expired = lookup?.wallet.expired === true;
+  // 期限切れのウォレットは、払い戻しだけできる
+  useEffect(() => {
+    if (expired) setMode("payout");
+  }, [expired, lookup?.lookupId]);
   const remainingSec = lookup ? Math.max(0, Math.floor((lookup.expiresAt - now) / 1000)) : 0;
 
   const goConfirm = () => {
@@ -234,6 +239,7 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
               {lookup.card && <span className="ml-2 text-xs font-medium text-muted-foreground">カード {lookup.card.displayNo}</span>}
             </p>
             {!active && <Badge variant="warning">利用停止中</Badge>}
+            {active && expired && <Badge variant="warning">有効期限切れ</Badge>}
           </div>
           <p className="mt-1 text-sm text-secondary-foreground">現在の残高</p>
           <p className="text-4xl font-extrabold tracking-tight">{money(w.balance)}</p>
@@ -255,6 +261,7 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
       ) : (
         <Card>
           <CardContent className="flex flex-col gap-4 pt-4">
+            {expired && <p className="rounded-lg bg-amber-100 px-3 py-2 text-sm font-medium text-amber-900">有効期限が切れているため、チャージはできません。残高の払い戻しだけできます。</p>}
             <Tabs
               value={mode}
               onValueChange={(v) => {
@@ -264,7 +271,7 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
             >
               <TabsList aria-label="操作" className="grid grid-cols-2">
                 {(["charge", "payout"] as const).map((m) => (
-                  <TabsTrigger key={m} value={m} className="h-11" disabled={confirming || op.pending}>
+                  <TabsTrigger key={m} value={m} className="h-11" disabled={confirming || op.pending || (expired && m === "charge")}>
                     {m === "charge" ? "チャージ" : "払い戻し"}
                   </TabsTrigger>
                 ))}

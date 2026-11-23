@@ -187,9 +187,21 @@ expect "返金は残高へ" 300 "$(dbq "SELECT balance FROM wallets WHERE id=(SE
 echo "== 期限切れ =="
 dbq "UPDATE cards SET expires_at = $PAST WHERE id='$C2'" >/dev/null
 scan $CLERK "$T2" "$(items $YAKI 1)"; check "期限切れはレジで使えない" 403; expect "コード" CARD_EXPIRED "$(jget "['error']['code']")"
-lookup $R1 "$T2"; check "期限切れは受付で使えない" 403
+# 期限切れの前に700をチャージしておく(あとで払い戻す)
+dbq "UPDATE cards SET expires_at = $(( $(date +%s) * 1000 + 86400000 )) WHERE id='$C2'" >/dev/null
+lookup $R1 "$T2"; LX=$(jget "['lookupId']")
+req $R1 POST /api/reception/charge "{\"lookupId\":\"$LX\",\"requestId\":\"$(rid)\",\"cashAmount\":700}"; check "期限前に700チャージ" 201
+dbq "UPDATE cards SET expires_at = $PAST WHERE id='$C2'" >/dev/null
+dbq "UPDATE wallets SET expires_at = $PAST WHERE id=(SELECT wallet_id FROM cards WHERE id='$C2')" >/dev/null
+lookup $R1 "$T2"; check "期限切れのカードも受付で読み取れる(払戻しのため)" 200; LE=$(jget "['lookupId']")
+expect "期限切れの印" True "$(jget "['wallet']['expired']")"
+req $R1 POST /api/reception/charge "{\"lookupId\":\"$LE\",\"requestId\":\"$(rid)\",\"cashAmount\":500}"; check "期限切れにはチャージできない" 409
+req $R1 POST /api/reception/payout "{\"lookupId\":\"$LE\",\"requestId\":\"$(rid)\",\"expectedBalance\":700}"; check "期限切れでもPINなしは払い戻せない" 400
+req $R1 POST /api/reception/payout "{\"lookupId\":\"$LE\",\"requestId\":\"$(rid)\",\"expectedBalance\":700,\"pin\":\"2222\"}"; check "期限切れでもPINがあれば残高を払い戻せる" 201
+expect "払戻し後の残高は0" 0 "$(dbq "SELECT balance FROM wallets WHERE id=(SELECT wallet_id FROM cards WHERE id='$C2')")"
 req $ADMIN GET "/api/cards?status=EXPIRED"; expect "期限切れの一覧" "C000002" "$(jget "['cards'][0]['displayNo']")"; expect "表示の状態" EXPIRED "$(jget "['cards'][0]['status']")"
 dbq "UPDATE cards SET expires_at = $(( $(date +%s) * 1000 + 86400000 )) WHERE id='$C2'" >/dev/null
+dbq "UPDATE wallets SET expires_at = $(( $(date +%s) * 1000 + 86400000 )) WHERE id=(SELECT wallet_id FROM cards WHERE id='$C2')" >/dev/null
 
 echo "== QRの再生成(未有効化) =="
 req $ADMIN POST /api/cards/$C3/regenerate '{}'; check "QRを作り直す" 200; T3N=$(jget "['card']['token']")

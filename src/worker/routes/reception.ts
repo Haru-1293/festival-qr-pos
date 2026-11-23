@@ -98,7 +98,8 @@ const LEDGER_EXISTS_SQL = "SELECT 1 FROM wallet_ledger WHERE id = ?";
 const cardLookupGuard = `(? IS NULL OR EXISTS (SELECT 1 FROM cards c WHERE c.id = ? AND ${cardUsableSql("c")}))`;
 const cardGuardArgs = (l: LookupRow, now: number): (string | number | null)[] => [l.card_id, l.card_id, now];
 /** 払戻しは、さらにPINを確認したときのハッシュと一致するカードに限る */
-const cardPinGuard = `(? IS NULL OR EXISTS (SELECT 1 FROM cards c WHERE c.id = ? AND c.pin_hash = ? AND ${cardUsableSql("c")}))`;
+/** (払戻しは、期限切れのカードでも残高を返せる。停止・削除されたカードは不可) */
+const cardPinGuard = `(? IS NULL OR EXISTS (SELECT 1 FROM cards c WHERE c.id = ? AND c.pin_hash = ? AND c.status = 'ACTIVE'))`;
 
 export const receptionRoutes = new Hono<AppEnv>()
   .use("*", requireRole("RECEPTION"))
@@ -136,22 +137,23 @@ export const receptionRoutes = new Hono<AppEnv>()
     // 物理カード: QRは固定で消費しない。使えるカードのときだけ読み取り(lookup)を作る。払戻しにはPINが必要
     if (isCard) {
       const card = await db
-        .prepare("SELECT c.id, c.status, c.expires_at, c.display_no, c.nickname, c.wallet_id, w.status AS wstatus, w.balance FROM cards c LEFT JOIN wallets w ON w.id = c.wallet_id WHERE c.qr_token_hash = ?")
+        .prepare("SELECT c.id, c.status, c.expires_at, c.display_no, c.nickname, c.wallet_id, w.status AS wstatus, w.balance, w.expires_at AS wexpires FROM cards c LEFT JOIN wallets w ON w.id = c.wallet_id WHERE c.qr_token_hash = ?")
         .bind(hash)
-        .first<{ id: string; status: string; expires_at: number | null; display_no: string; nickname: string | null; wallet_id: string | null; wstatus: LookupResponse["wallet"]["status"] | null; balance: number | null }>();
+        .first<{ id: string; status: string; expires_at: number | null; display_no: string; nickname: string | null; wallet_id: string | null; wstatus: LookupResponse["wallet"]["status"] | null; balance: number | null; wexpires: number | null }>();
       if (!card) throw badRequest("このカードは登録されていないか、無効になっています", "INVALID_QR");
       if (card.status === "ISSUED") throw forbidden("このカードはまだ有効化されていません。全体管理者に有効化を依頼してください", "CARD_INACTIVE");
       if (card.status === "SUSPENDED") throw forbidden("このカードは一時停止中です", "CARD_INACTIVE");
       if (card.status !== "ACTIVE") throw forbidden("このカードは使えません", "CARD_INACTIVE");
-      if (card.expires_at !== null && card.expires_at <= now) throw forbidden("このカードは有効期限が切れています", "CARD_EXPIRED");
+      // 期限切れのカードも読み取れる(残高の払戻しだけできる。チャージ・支払いはできない)
+      const cardExpired = card.expires_at !== null && card.expires_at <= now;
       if (!card.wallet_id) throw forbidden("このカードにはウォレットがありません", "CARD_INACTIVE");
       const ins = await db.batch([
         db
           .prepare(
             `INSERT INTO wallet_lookups (id, wallet_id, card_id, reception_user_id, created_at, expires_at)
-             SELECT ?, c.wallet_id, c.id, ?, ?, ? FROM cards c WHERE c.id = ? AND ${cardUsableSql("c")}`,
+             SELECT ?, c.wallet_id, c.id, ?, ?, ? FROM cards c WHERE c.id = ? AND c.status = 'ACTIVE'`,
           )
-          .bind(lookupId, auth.userId, now, expiresAt, card.id, now),
+          .bind(lookupId, auth.userId, now, expiresAt, card.id),
       ]);
       if ((ins[0].meta.changes ?? 0) !== 1) throw forbidden("このカードは使えません。もう一度読み取ってください", "CARD_INACTIVE");
       await db.batch([auditStmt(db, { actor: auth, action: "wallet.lookup", targetType: "wallet", targetId: card.wallet_id, after: { lookupId, card: card.display_no } })]);
@@ -159,7 +161,7 @@ export const receptionRoutes = new Hono<AppEnv>()
       return c.json({
         lookupId,
         expiresAt,
-        wallet: { id: card.wallet_id, nickname: card.nickname, balance: card.balance ?? 0, status: card.wstatus ?? "ACTIVE" },
+        wallet: { id: card.wallet_id, nickname: card.nickname, balance: card.balance ?? 0, status: card.wstatus ?? "ACTIVE", expired: cardExpired || (card.wexpires !== null && card.wexpires <= now) },
         card: { displayNo: card.display_no },
         yenPerUnit: currency.yenPerUnit,
       } satisfies LookupResponse);
@@ -198,13 +200,13 @@ export const receptionRoutes = new Hono<AppEnv>()
         // 持ち主のアカウントが停止中のときも「停止中」として見せる(チャージ・払戻しはサーバー側でも拒否される)
         `SELECT w.id, w.balance,
                 CASE WHEN u.status IS NOT NULL AND u.status <> 'ACTIVE' THEN 'SUSPENDED' ELSE w.status END AS status,
-                u.nickname
+                w.expires_at, u.nickname
            FROM wallet_lookups l
            JOIN wallets w ON w.id = l.wallet_id LEFT JOIN users u ON u.id = w.owner_user_id
           WHERE l.id = ?`,
       )
       .bind(lookupId)
-      .first<{ id: string; balance: number; status: LookupResponse["wallet"]["status"]; nickname: string | null }>();
+      .first<{ id: string; balance: number; status: LookupResponse["wallet"]["status"]; expires_at: number | null; nickname: string | null }>();
     if (!w) throw notFound("ウォレットが見つかりません");
     await db.batch([
       auditStmt(db, { actor: auth, action: "wallet.lookup", targetType: "wallet", targetId: w.id, after: { lookupId } }),
@@ -213,7 +215,7 @@ export const receptionRoutes = new Hono<AppEnv>()
     return c.json({
       lookupId,
       expiresAt,
-      wallet: { id: w.id, nickname: w.nickname, balance: w.balance, status: w.status },
+      wallet: { id: w.id, nickname: w.nickname, balance: w.balance, status: w.status, expired: w.expires_at !== null && w.expires_at <= Date.now() },
       yenPerUnit: currency.yenPerUnit,
     } satisfies LookupResponse);
   })
@@ -321,7 +323,7 @@ export const receptionRoutes = new Hono<AppEnv>()
           .prepare("SELECT status, expires_at, pin_hash FROM cards WHERE id = ?")
           .bind(lookup.card_id)
           .first<{ status: string; expires_at: number | null; pin_hash: string | null }>();
-        if (!card || card.status !== "ACTIVE" || (card.expires_at !== null && card.expires_at <= Date.now())) {
+        if (!card || card.status !== "ACTIVE") {
           throw forbidden("このカードは使えなくなりました", "CARD_INACTIVE");
         }
         if (!c.env.PIN_PEPPER) throw conflict("PIN_PEPPER が設定されていないため、カードを使えません", "PEPPER_MISSING");
@@ -348,7 +350,7 @@ export const receptionRoutes = new Hono<AppEnv>()
                SELECT ?, w.id, 'PAYOUT', -w.balance, 0, 'CASH_EVENT', ?, ?, ?, ?
                  FROM wallets w WHERE w.id = ? AND ${WALLET_ACTIVE_SQL} AND w.balance = ? AND w.balance > 0 AND ${cardPinGuard}`,
             )
-            .bind(ledgerId, eventId, auth.userId, b.requestId, now, lookup.wallet_id, b.expectedBalance, lookup.card_id, lookup.card_id, pinHash, Date.now()),
+            .bind(ledgerId, eventId, auth.userId, b.requestId, now, lookup.wallet_id, b.expectedBalance, lookup.card_id, lookup.card_id, pinHash),
           db
             .prepare(
               `UPDATE wallets SET balance = (SELECT balance_after FROM wallet_ledger WHERE id = ?)
