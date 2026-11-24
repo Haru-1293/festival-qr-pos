@@ -12,6 +12,8 @@ ALTER TABLE refund_lines ADD COLUMN percent INTEGER CHECK (percent IS NULL OR (p
 
 -- 監査ログを店舗で絞り込むための列(操作者または対象の店舗)。書き込み時に自動で入る
 ALTER TABLE audit_logs ADD COLUMN shop_id TEXT;
+-- 監査ログは更新禁止のトリガがあるので、過去の記録に店舗を補うあいだだけ外して、すぐ元に戻す(同じマイグレーションの中で完結する)
+DROP TRIGGER audit_logs_no_update;
 UPDATE audit_logs SET shop_id = CASE target_type
     WHEN 'shop' THEN target_id
     WHEN 'order' THEN (SELECT shop_id FROM orders WHERE id = audit_logs.target_id)
@@ -21,6 +23,8 @@ UPDATE audit_logs SET shop_id = CASE target_type
     WHEN 'set' THEN (SELECT shop_id FROM sets WHERE id = audit_logs.target_id)
   END;
 UPDATE audit_logs SET shop_id = (SELECT shop_id FROM users WHERE id = audit_logs.actor_user_id) WHERE shop_id IS NULL;
+CREATE TRIGGER audit_logs_no_update BEFORE UPDATE ON audit_logs
+BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END;
 
 CREATE INDEX idx_audit_shop_time ON audit_logs(shop_id, created_at);
 CREATE INDEX idx_audit_action_time ON audit_logs(action, created_at);
