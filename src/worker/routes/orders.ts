@@ -3,8 +3,10 @@ import { z } from "zod";
 import type { FulfillmentStatus, TrackedOrderDto } from "@shared/api";
 import type { AppEnv } from "../env";
 import { auditStmtIfExists } from "../lib/audit";
-import { badRequest, forbidden, notFound } from "../lib/errors";
+import { badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { orderNo } from "../lib/order";
+import { isCallNoActive } from "../lib/callno";
+import { auditStmtIfExists as auditIfExists } from "../lib/audit";
 import { performRefund } from "./refunds";
 import { zv as zValidator } from "../lib/validate";
 import { assertShopAccess, requireAuth, requireRole } from "../middleware/auth";
@@ -75,6 +77,36 @@ export const orderRoutes = new Hono<AppEnv>()
     if ((res[0].meta.changes ?? 0) === 0) throw notFound("注文が見つかりません");
     return c.json({ ok: true });
   })
+  // 呼び出し番号(番号札)の付け替え。入力の間違いや、番号札の取り違えの直しに使う。受け渡し済みは変えられない
+  .post(
+    "/:shopId/:orderId/call-no",
+    orderParam,
+    zValidator("json", z.object({ callNo: z.number().int().min(1, "番号は1〜999で入力してください").max(999, "番号は1〜999で入力してください") })),
+    async (c) => {
+      const auth = requireAuth(c);
+      const { shopId, orderId } = c.req.valid("param");
+      assertShopAccess(auth, shopId);
+      const { callNo } = c.req.valid("json");
+      const db = c.env.DB;
+      const cur = await db.prepare("SELECT call_no, status FROM order_tracking WHERE order_id = ? AND shop_id = ?").bind(orderId, shopId).first<{ call_no: number; status: string }>();
+      if (!cur) throw notFound("注文が見つかりません");
+      if (cur.status === "DONE") throw badRequest("受け渡し済みの注文の番号は変えられません", "ORDER_DELIVERED");
+      if (cur.call_no === callNo) return c.json({ ok: true, callNo });
+      if (await isCallNoActive(db, shopId, callNo, orderId)) throw conflict(`番号 ${callNo} は、まだ受け渡しが済んでいない別の注文で使われています`, "CALL_NO_IN_USE");
+      const now = Date.now();
+      const res = await db.batch([
+        db.prepare("UPDATE order_tracking SET call_no = ?, updated_at = ? WHERE order_id = ? AND shop_id = ? AND status <> 'DONE'").bind(callNo, now, orderId, shopId),
+        auditIfExists(
+          db,
+          { actor: auth, action: "order.call_no", targetType: "order", targetId: orderId, before: { callNo: cur.call_no }, after: { callNo } },
+          "SELECT 1 FROM order_tracking WHERE order_id = ? AND call_no = ? AND updated_at = ?",
+          [orderId, callNo, now],
+        ),
+      ]);
+      if ((res[0].meta.changes ?? 0) === 0) throw conflict("注文の状態が変わりました。もう一度お試しください", "STATE_CHANGED");
+      return c.json({ ok: true, callNo });
+    },
+  )
   // 最近の注文(取消しの対象を探す用)。支払いから2時間以内で、まだ取り消していないもの。新しい順
   .get("/:shopId/recent", shopParam, async (c) => {
     const auth = requireAuth(c);

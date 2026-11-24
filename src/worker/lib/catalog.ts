@@ -45,8 +45,8 @@ export async function loadRunningCut(db: D1Database, shopId: string, now: number
   return r ? toCutDto(r, now) : null;
 }
 
-export function catalogSignature(version: number, cut: PriceCutDto | null): string {
-  return `${version}:${cut?.id ?? "-"}`;
+export function catalogSignature(version: number, cut: PriceCutDto | null, mode = "-"): string {
+  return `${version}:${cut?.id ?? "-"}:${mode}`;
 }
 
 export async function loadVersion(db: D1Database, shopId: string): Promise<number> {
@@ -132,10 +132,16 @@ export async function loadProducts(
 /** POS 用の商品一覧。`since` が現在の署名と同じなら中身を返さない(数秒おきの確認を軽くする) */
 export async function buildPosCatalog(db: D1Database, shopId: string, since: string | undefined): Promise<CatalogResponse> {
   const now = Date.now();
-  const [version, cut] = await Promise.all([loadVersion(db, shopId), loadRunningCut(db, shopId, now)]);
-  const signature = catalogSignature(version, cut);
+  const [version, cut, shop] = await Promise.all([
+    loadVersion(db, shopId),
+    loadRunningCut(db, shopId, now),
+    db.prepare("SELECT display_name, use_order_tracking, call_mode FROM shops WHERE id = ?").bind(shopId).first<{ display_name: string; use_order_tracking: number; call_mode: string }>(),
+  ]);
+  const tracking = shop?.use_order_tracking === 1;
+  const tagMode = tracking && shop?.call_mode === "TAG";
+  // 呼び出しの設定が変わったときも、レジが新しい内容を取り直せるよう署名に含める
+  const signature = catalogSignature(version, cut, `${tracking ? 1 : 0}${tagMode ? "T" : "A"}`);
   if (since === signature) return { changed: false, signature, serverTime: now };
-  const shop = await db.prepare("SELECT display_name FROM shops WHERE id = ?").bind(shopId).first<{ display_name: string }>();
   const [products, sets] = await Promise.all([loadProducts(db, shopId, { cut, posOnly: true }), loadSets(db, shopId, { cut, posOnly: true })]);
-  return { changed: true, signature, serverTime: now, shopName: shop?.display_name ?? "", cut, products, sets };
+  return { changed: true, signature, serverTime: now, shopName: shop?.display_name ?? "", cut, fulfillment: { tracking, tagMode }, products, sets };
 }

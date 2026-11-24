@@ -212,6 +212,8 @@ export type CatalogResponse =
       shopName: string;
       /** いま適用中の値下げ。なければ null */
       cut: PriceCutDto | null;
+      /** 注文ステータス(呼び出し)の設定。tagMode のとき、レジで番号札の番号を入力する */
+      fulfillment: { tracking: boolean; tagMode: boolean };
       products: ProductDto[];
       /** 販売中のセット(選択肢つき) */
       sets: SetDto[];
@@ -688,9 +690,24 @@ export interface EmergencyState {
 // ---------- 注文ステータス・呼び出しボード ----------
 export type FulfillmentStatus = "PREPARING" | "READY" | "DONE";
 
+/** 呼び出しの方式。AUTO = 自動の番号 / TAG = レジで店員が番号札の番号を入力 */
+export type CallMode = "AUTO" | "TAG";
 export interface ShopOptions {
   orderTracking: boolean;
   callBoard: boolean;
+  callMode: CallMode;
+}
+
+/** お客様の「受け取り待ち」の注文(スマホで呼び出し番号を見る用。受け渡しが済むまで) */
+export interface ActiveOrderDto {
+  orderId: string;
+  orderNo: string;
+  shopName: string;
+  callNo: number;
+  /** PREPARING = 調理中・調理待ち / READY = 呼び出し中(受け取りに来てください) */
+  status: "PREPARING" | "READY";
+  paidAt: number;
+  items: string | null;
 }
 
 export interface TrackedOrderDto {

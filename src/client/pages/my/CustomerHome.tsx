@@ -1,3 +1,4 @@
+import { ActiveOrdersCard } from "@/components/ActiveOrdersCard";
 import { HistoryCard } from "@/components/HistoryCard";
 import { PayQrCard } from "@/components/PayQrCard";
 import { Shell } from "@/components/Shell";
@@ -41,6 +42,7 @@ export function CustomerHome() {
           </div>
           <CardContent className="text-sm text-muted-foreground">{settings.currency.description}</CardContent>
         </Card>
+        <ActiveOrdersCard />
         <PayQrCard disabled={w?.status !== "ACTIVE" || expired} />
         <HistoryCard balance={w?.balance} />
       </div>

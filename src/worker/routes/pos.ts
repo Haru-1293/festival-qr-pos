@@ -5,6 +5,7 @@ import type { PaySession, PayStatus, Quote } from "@shared/api";
 import type { AppEnv } from "../env";
 import { auditStmt, auditStmtIfExists } from "../lib/audit";
 import { bumpCatalogStmt, buildPosCatalog } from "../lib/catalog";
+import { isCallNoActive } from "../lib/callno";
 import { cardUsableSql } from "../lib/cards";
 import { sha256Hex, verifyPin } from "../lib/crypto";
 import { badRequest, conflict, forbidden, notFound } from "../lib/errors";
@@ -146,20 +147,27 @@ export const posRoutes = new Hono<AppEnv>()
   .post(
     "/:shopId/pay/scan",
     shopParam,
-    zValidator("json", z.object({ token: z.string().trim().max(100), items: cartSchema, couponCode: couponSchema })),
+    zValidator("json", z.object({ token: z.string().trim().max(100), items: cartSchema, couponCode: couponSchema, tagNo: z.number().int().min(1, "番号札は1〜999で入力してください").max(999, "番号札は1〜999で入力してください").optional() })),
     async (c) => {
       const auth = requireAuth(c);
       const { shopId } = c.req.valid("param");
       assertShopAccess(auth, shopId);
-      const { token, items, couponCode: rawCoupon } = c.req.valid("json");
+      const { token, items, couponCode: rawCoupon, tagNo: rawTag } = c.req.valid("json");
       const couponCode = rawCoupon || null;
       const isCard = CARD_QR_PATTERN.test(token);
       if (!isCard && !WALLET_QR_PATTERN.test(token)) throw badRequest("お客様のQRではありません", "INVALID_QR");
       const db = c.env.DB;
       const now = Date.now();
-      const shop = await db.prepare("SELECT status FROM shops WHERE id = ?").bind(shopId).first<{ status: string }>();
+      const shop = await db.prepare("SELECT status, use_order_tracking, call_mode FROM shops WHERE id = ?").bind(shopId).first<{ status: string; use_order_tracking: number; call_mode: string }>();
       if (!shop) throw notFound("店舗が見つかりません");
       if (shop.status !== "ACTIVE") throw forbidden("この店舗は現在会計できません", "SHOP_INACTIVE");
+      // 番号札の方式: レジで番号を入力する(必須)。使用中の番号は使えない。QRを消費する前に確かめる
+      const tagMode = shop.use_order_tracking === 1 && shop.call_mode === "TAG";
+      const tagNo = tagMode ? (rawTag ?? null) : null;
+      if (tagMode) {
+        if (tagNo === null) throw badRequest("番号札の番号を入力してください", "TAG_REQUIRED");
+        if (await isCallNoActive(db, shopId, tagNo)) throw conflict(`番号札 ${tagNo} は、まだ受け渡しが済んでいない注文で使われています`, "TAG_IN_USE");
+      }
 
       let quote = await quoteCart(db, shopId, items, now, couponCode);
       if (quote.problems.length > 0) throw conflict(quote.problems[0].message, "CART_UNAVAILABLE", { quote: publicQuote(quote) });
@@ -198,11 +206,11 @@ export const posRoutes = new Hono<AppEnv>()
         const res = await db.batch([
           db
             .prepare(
-              `INSERT INTO payment_sessions (id, shop_id, clerk_user_id, wallet_id, pay_source, card_id, cart_json, coupon_code, status, created_at, expires_at)
-               SELECT ?, ?, ?, c.wallet_id, 'CARD', c.id, ?, ?, 'OPEN', ?, ? FROM cards c
+              `INSERT INTO payment_sessions (id, shop_id, clerk_user_id, wallet_id, pay_source, card_id, cart_json, coupon_code, status, created_at, expires_at, tag_no)
+               SELECT ?, ?, ?, c.wallet_id, 'CARD', c.id, ?, ?, 'OPEN', ?, ?, ? FROM cards c
                 WHERE c.qr_token_hash = ? AND ${cardUsableSql("c")}`,
             )
-            .bind(sessionId, shopId, auth.userId, cart, couponCode ? quote.applied.find((a) => a.couponCode)?.couponCode ?? null : null, now, expiresAt, hash, now),
+            .bind(sessionId, shopId, auth.userId, cart, couponCode ? quote.applied.find((a) => a.couponCode)?.couponCode ?? null : null, now, expiresAt, tagNo, hash, now),
         ]);
         if ((res[0].meta.changes ?? 0) !== 1) throw forbidden("このカードは使えません。もう一度読み取ってください", "CARD_INACTIVE");
         await db.batch([
@@ -243,11 +251,11 @@ export const posRoutes = new Hono<AppEnv>()
           .bind(now, auth.userId, hash, now),
         db
           .prepare(
-            `INSERT INTO payment_sessions (id, shop_id, clerk_user_id, wallet_id, pay_source, cart_json, coupon_code, status, created_at, expires_at)
-             SELECT ?, ?, ?, t.wallet_id, 'PHONE_QR', ?, ?, 'OPEN', ?, ? FROM pay_qr_tokens t
+            `INSERT INTO payment_sessions (id, shop_id, clerk_user_id, wallet_id, pay_source, cart_json, coupon_code, status, created_at, expires_at, tag_no)
+             SELECT ?, ?, ?, t.wallet_id, 'PHONE_QR', ?, ?, 'OPEN', ?, ?, ? FROM pay_qr_tokens t
               WHERE t.token_hash = ? AND t.consumed_at = ? AND t.consumed_by_user_id = ?`,
           )
-          .bind(sessionId, shopId, auth.userId, cart, quote.applied.find((a) => a.couponCode)?.couponCode ?? null, now, expiresAt, hash, now, auth.userId),
+          .bind(sessionId, shopId, auth.userId, cart, quote.applied.find((a) => a.couponCode)?.couponCode ?? null, now, expiresAt, tagNo, hash, now, auth.userId),
       ]);
       if ((res[1].meta.changes ?? 0) !== 1) {
         const t = await db
@@ -324,9 +332,9 @@ export const posRoutes = new Hono<AppEnv>()
       }
 
       const s = await db
-        .prepare("SELECT wallet_id, card_id, cart_json, coupon_code, status, expires_at, order_id FROM payment_sessions WHERE id = ? AND shop_id = ?")
+        .prepare("SELECT wallet_id, card_id, cart_json, coupon_code, status, expires_at, order_id, tag_no FROM payment_sessions WHERE id = ? AND shop_id = ?")
         .bind(sessionId, shopId)
-        .first<{ wallet_id: string; card_id: string | null; cart_json: string; coupon_code: string | null; status: string; expires_at: number; order_id: string | null }>();
+        .first<{ tag_no: number | null; wallet_id: string; card_id: string | null; cart_json: string; coupon_code: string | null; status: string; expires_at: number; order_id: string | null }>();
       if (!s) throw notFound("決済が見つかりません", "SESSION_NOT_FOUND");
       if (s.status === "COMMITTED") throw conflict("この決済はすでに確定しています", "SESSION_DONE");
       if (s.status === "CANCELLED") throw conflict("この決済は取り消されています。QRを読み取り直してください", "SESSION_CANCELLED");
@@ -474,6 +482,17 @@ export const posRoutes = new Hono<AppEnv>()
         db
           .prepare(`UPDATE payment_sessions SET order_id = ? WHERE id = ? AND ${orderExists}`)
           .bind(orderId, sessionId, orderId),
+        // 番号札: レジで入力された番号を呼び出し番号にする(自動で振られた番号を上書き)。
+        // 入力から確定までのあいだに同じ番号が使われていたら、自動の番号のままにする(結果の画面に出る番号が正)
+        db
+          .prepare(
+            `UPDATE order_tracking SET call_no = ?1
+              WHERE order_id = ?2 AND ?1 IS NOT NULL AND ${orderExists.replace("?", "?2")}
+                AND NOT EXISTS (SELECT 1 FROM order_tracking t2 JOIN orders o2 ON o2.id = t2.order_id
+                                 WHERE t2.shop_id = order_tracking.shop_id AND t2.order_id <> order_tracking.order_id AND t2.call_no = ?1
+                                   AND t2.status IN ('PREPARING','READY') AND o2.refunded_total < o2.total_paid)`,
+          )
+          .bind(s.tag_no, orderId),
       );
       quote.raw.forEach((l, i) => {
         const lineId = newId(now);

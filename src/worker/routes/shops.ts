@@ -25,18 +25,18 @@ export const shopRoutes = new Hono<AppEnv>()
     const auth = requireAuth(c);
     const { shopId } = c.req.valid("param");
     assertShopAccess(auth, shopId);
-    const r = await c.env.DB.prepare("SELECT use_order_tracking, use_call_board FROM shops WHERE id = ?").bind(shopId).first<{ use_order_tracking: number; use_call_board: number }>();
+    const r = await c.env.DB.prepare("SELECT use_order_tracking, use_call_board, call_mode FROM shops WHERE id = ?").bind(shopId).first<{ use_order_tracking: number; use_call_board: number; call_mode: "AUTO" | "TAG" }>();
     if (!r) throw notFound("店舗が見つかりません");
-    return c.json({ options: { orderTracking: r.use_order_tracking === 1, callBoard: r.use_call_board === 1 } satisfies ShopOptions });
+    return c.json({ options: { orderTracking: r.use_order_tracking === 1, callBoard: r.use_call_board === 1, callMode: r.call_mode } satisfies ShopOptions });
   })
-  .put("/:shopId/options", shopParam, zValidator("json", z.object({ orderTracking: z.boolean(), callBoard: z.boolean() })), async (c) => {
+  .put("/:shopId/options", shopParam, zValidator("json", z.object({ orderTracking: z.boolean(), callBoard: z.boolean(), callMode: z.enum(["AUTO", "TAG"]).default("AUTO") })), async (c) => {
     const auth = requireAuth(c);
     const { shopId } = c.req.valid("param");
     assertShopAccess(auth, shopId);
     const b = c.req.valid("json");
     if (b.callBoard && !b.orderTracking) throw badRequest("呼び出しボードを使うには、注文ステータスもオンにしてください");
     const res = await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE shops SET use_order_tracking = ?, use_call_board = ? WHERE id = ?").bind(b.orderTracking ? 1 : 0, b.callBoard ? 1 : 0, shopId),
+      c.env.DB.prepare("UPDATE shops SET use_order_tracking = ?, use_call_board = ?, call_mode = ? WHERE id = ?").bind(b.orderTracking ? 1 : 0, b.callBoard ? 1 : 0, b.callMode, shopId),
       auditStmt(c.env.DB, { actor: auth, action: "shop.options", targetType: "shop", targetId: shopId, after: b }),
     ]);
     if ((res[0].meta.changes ?? 0) === 0) throw notFound("店舗が見つかりません");

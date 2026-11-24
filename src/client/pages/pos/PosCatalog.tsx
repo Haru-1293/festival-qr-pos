@@ -100,6 +100,7 @@ export function PosCatalog({ shopId }: { shopId: string }) {
       products={catalog?.products ?? []}
       sets={catalog?.sets ?? []}
       cart={cart}
+      tagMode={catalog?.fulfillment.tagMode}
       onChange={change}
       onRemove={remove}
       onClose={() => setCheckout(false)}

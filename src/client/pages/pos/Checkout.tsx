@@ -24,6 +24,8 @@ interface Props {
   products: ProductDto[];
   sets: SetDto[];
   cart: Cart;
+  /** 番号札の方式のとき true。レジで番号札の番号を入力する */
+  tagMode?: boolean;
   onChange: (key: string, by: number) => void;
   onRemove: (id: string) => void;
   onFinished: () => void;
@@ -33,7 +35,7 @@ interface Props {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** カート確認 → お客様のQR読み取り → 支払い確定。価格はサーバーが確定の瞬間に再計算する */
-export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onFinished, onClose }: Props) {
+export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRemove, onFinished, onClose }: Props) {
   const { money } = useAuth();
   const [step, setStep] = useState<Step>("cart");
   const [session, setSession] = useState<PaySession | null>(null);
@@ -51,6 +53,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
   const [codeInput, setCodeInput] = useState("");
   const [coupon, setCoupon] = useState("");
   const [couponScan, setCouponScan] = useState(false);
+  const [tag, setTag] = useState("");
   const [preview, setPreview] = useState<Quote | null>(null);
   const reqId = useRequestId();
   const renewReq = reqId.renew;
@@ -66,8 +69,9 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
   const displayTotal = preview && preview.problems.length === 0 ? preview.total : localTotal;
 
   // 読み取りの関数(カメラの再起動を避けるため固定)から、いつでも最新のカートを読めるようにする
-  const latest = useRef({ items, localTotal: displayTotal, coupon });
-  latest.current = { items, localTotal: displayTotal, coupon };
+  const tagNo = tagMode && /^[0-9]{1,3}$/.test(tag) ? Number(tag) : undefined;
+  const latest = useRef({ items, localTotal: displayTotal, coupon, tagNo });
+  latest.current = { items, localTotal: displayTotal, coupon, tagNo };
 
   // カートが変わったら、割引・クーポンを含めた見積もりをサーバーに計算してもらう
   const itemsKey = JSON.stringify(items);
@@ -117,6 +121,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
             token: value.trim(),
             items: latest.current.items,
             couponCode: latest.current.coupon || undefined,
+            tagNo: latest.current.tagNo,
           },
         });
         setSession(s);
@@ -133,6 +138,10 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
         else if (e instanceof ApiRequestError && e.code === "COUPON_INVALID") {
           // QRは消費されていない。クーポンを外すか直してから、もう一度読み取れる
           setError(`${e.message}(クーポンを外すか、別のコードを入力してください。お客様のQRは使われていません)`);
+          setStep("cart");
+        } else if (e instanceof ApiRequestError && (e.code === "TAG_IN_USE" || e.code === "TAG_REQUIRED")) {
+          // QRは消費されていない。番号札を入れ直してから、もう一度読み取れる
+          setError(`${e.message}(番号札を入れ直してください。お客様のQRは使われていません)`);
           setStep("cart");
         } else setError(errorMessage(e));
       } finally {
@@ -268,7 +277,7 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
             <p className="text-sm text-secondary-foreground">残高 {money(result.balanceAfter)}</p>
             {result.callNo !== null && (
               <div className="mt-2 rounded-2xl bg-white px-8 py-3">
-                <p className="text-xs text-muted-foreground">呼び出し番号</p>
+                <p className="text-xs text-muted-foreground">{tagMode ? "番号札(呼び出し番号)" : "呼び出し番号"}</p>
                 <p className="text-6xl font-black leading-none">{result.callNo}</p>
               </div>
             )}
@@ -546,9 +555,22 @@ export function Checkout({ shopId, products, sets, cart, onChange, onRemove, onF
           <span className="text-sm text-muted-foreground">合計</span>
           <span className="text-3xl font-extrabold tracking-tight">{money(displayTotal)}</span>
         </div>
+        {tagMode && (
+          <label className="flex items-center justify-between gap-3 rounded-xl bg-secondary px-3 py-2">
+            <span className="text-sm font-bold">番号札の番号</span>
+            <Input
+              inputMode="numeric"
+              value={tag}
+              onChange={(e) => setTag(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
+              placeholder="例: 12"
+              aria-label="番号札の番号"
+              className="h-11 w-28 bg-white text-center text-2xl font-extrabold"
+            />
+          </label>
+        )}
         <Button
           size="lg"
-          disabled={rows.length === 0 || unavailable}
+          disabled={rows.length === 0 || unavailable || (!!tagMode && (tagNo === undefined || tagNo < 1))}
           onClick={() => {
             setError(null);
             setNotice(null);

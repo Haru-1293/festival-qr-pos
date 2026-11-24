@@ -59,8 +59,30 @@ export function ShopSettings({ shopId }: { shopId: string }) {
                 title="注文ステータスを使う"
                 desc="支払いが済むたびに「調理中」の注文として並び、できあがったら「提供可能」にできます。お客様には呼び出し番号が表示されます"
                 checked={opts.orderTracking}
-                onChange={(v) => update({ orderTracking: v, callBoard: v ? opts.callBoard : false })}
+                onChange={(v) => update({ ...opts, orderTracking: v, callBoard: v ? opts.callBoard : false })}
               />
+              <div className="flex flex-col gap-2">
+                <span className="text-sm font-bold">呼び出し番号の付け方</span>
+                <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="呼び出し番号の付け方">
+                  {([
+                    ["AUTO", "自動で番号を振る", "支払いのたびに 1〜99 を順に振ります(お客様のスマホとボードに出ます)"],
+                    ["TAG", "番号札を使う", "レジで店員が番号札の番号(1〜999)を入力します。使用中の番号は入力できません"],
+                  ] as const).map(([v, t, d]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      role="radio"
+                      aria-checked={opts.callMode === v}
+                      disabled={!opts.orderTracking}
+                      onClick={() => update({ ...opts, callMode: v })}
+                      className={`flex flex-col items-start gap-0.5 rounded-xl border-2 px-3 py-2 text-left disabled:opacity-50 ${opts.callMode === v ? "border-primary bg-secondary" : "border-border"}`}
+                    >
+                      <span className="text-sm font-bold">{t}</span>
+                      <span className="text-xs text-muted-foreground">{d}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
               <Row
                 id="opt-board"
                 title="呼び出しボードを使う"
