@@ -1,5 +1,5 @@
 import { Archive, Pencil, Plus, Warehouse } from "lucide-react";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import type { PriceCutDto, ProductDto, SaleMode, TagDto } from "@shared/api";
 import { PriceView } from "@/components/PriceView";
 import { ErrorText, Field } from "@/components/Shell";
@@ -75,6 +75,16 @@ export function ProductManager({ shopId }: { shopId: string }) {
   useEffect(() => {
     void load().catch(() => undefined);
   }, [load]);
+
+  // 編集・登録の入力欄は一覧の上にあるので、開いたらそこへ移動する(一覧の下の方で「編集」を押しても反応したように見える)
+  const formRef = useRef<HTMLDivElement>(null);
+  const opened = draft !== null;
+  const editingId = draft?.id;
+  useEffect(() => {
+    if (!opened) return;
+    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    formRef.current?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+  }, [opened, editingId]);
 
   const edit = (p: ProductDto) =>
     setDraft({
@@ -183,6 +193,7 @@ export function ProductManager({ shopId }: { shopId: string }) {
   return (
     <div className="flex flex-col gap-4">
       {draft ? (
+        <div ref={formRef} className="scroll-mt-4">
         <Card>
           <CardHeader>
             <CardTitle>{draft.id ? "商品を編集" : "商品を登録"}</CardTitle>
@@ -291,6 +302,7 @@ export function ProductManager({ shopId }: { shopId: string }) {
             </form>
           </CardContent>
         </Card>
+        </div>
       ) : (
         <Button size="lg" onClick={() => setDraft({ ...EMPTY })}>
           <Plus /> 商品を登録する
