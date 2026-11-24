@@ -1,9 +1,13 @@
 import { Copy, ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import type { ShopOptions } from "@shared/api";
+import type { ShopNameHistoryItem, ShopOptions } from "@shared/api";
 import { ErrorText } from "@/components/Shell";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useAuth } from "@/lib/auth";
+import { useConfirm } from "@/lib/confirm";
+import { formatDateTime } from "@/lib/utils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { api } from "@/lib/api";
@@ -18,6 +22,75 @@ function Row({ id, title, desc, checked, onChange, disabled }: { id: string; tit
       </label>
       <Switch id={id} checked={checked} onCheckedChange={onChange} disabled={disabled} />
     </div>
+  );
+}
+
+/** 店舗名の変更(店舗責任者・全体管理者)。変更しても過去の注文・ログは同じ店舗のまま、その時点の名前で見られる */
+function ShopNameCard({ shopId }: { shopId: string }) {
+  const { refresh, me } = useAuth();
+  const confirm = useConfirm();
+  const [current, setCurrent] = useState("");
+  const [name, setName] = useState("");
+  const [history, setHistory] = useState<ShopNameHistoryItem[]>([]);
+  const act = useAction();
+  const load = () =>
+    api<{ displayName: string; history: ShopNameHistoryItem[] }>(`/shops/${shopId}/name`)
+      .then((r) => {
+        setCurrent(r.displayName);
+        setName(r.displayName);
+        setHistory(r.history);
+      })
+      .catch(() => undefined);
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shopId]);
+  const next = name.trim();
+  const submit = async () => {
+    if (!(await confirm(`店舗名を「${current}」から「${next}」に変更しますか?\n過去の注文や履歴は、そのまま同じ店舗として残ります。`))) return;
+    await act.run(async () => {
+      await api(`/shops/${shopId}/rename`, { body: { displayName: next } });
+      await load();
+      if (me?.user.shopId === shopId) await refresh();
+    });
+  };
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>店舗名</CardTitle>
+        <CardDescription>お客様の画面・呼び出しボード・レシートに出る名前です。変更しても、過去の注文や監査ログは同じ店舗として引き継がれ、当時の名前で表示されます</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <form
+          className="flex flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={50} aria-label="店舗名" className="w-full max-w-xs" />
+          <Button type="submit" disabled={act.pending || next === "" || next === current}>
+            名前を変更
+          </Button>
+        </form>
+        <ErrorText message={act.error} />
+        {history.length > 1 && (
+          <div className="flex flex-col gap-1">
+            <p className="text-xs font-bold text-muted-foreground">店舗名の履歴</p>
+            <ul className="flex flex-col gap-0.5 text-sm">
+              {history.map((h, i) => (
+                <li key={`${h.validFrom}-${i}`} className="flex flex-wrap justify-between gap-2">
+                  <span className={i === 0 ? "font-bold" : ""}>{h.displayName}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {h.validFrom === 0 ? "最初の名前" : `${formatDateTime(h.validFrom)}${h.changedBy ? ` ・ ${h.changedBy}` : ""}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -44,6 +117,7 @@ export function ShopSettings({ shopId }: { shopId: string }) {
   const boardUrl = `${window.location.origin}/board/${shopId}`;
   return (
     <div className="flex flex-col gap-4">
+      <ShopNameCard shopId={shopId} />
       <Card>
         <CardHeader>
           <CardTitle>注文ステータスと呼び出し</CardTitle>
@@ -66,7 +140,7 @@ export function ShopSettings({ shopId }: { shopId: string }) {
                 <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="呼び出し番号の付け方">
                   {([
                     ["AUTO", "自動で番号を振る", "支払いのたびに 1〜99 を順に振ります(お客様のスマホとボードに出ます)"],
-                    ["TAG", "番号札を使う", "レジで店員が番号札の番号(1〜999)を入力します。使用中の番号は入力できません"],
+                    ["TAG", "番号札を使う", "レジで店員が番号札の文字を入力します(半角の英数字・記号、8文字まで。例: 12、A5、B-3)。使用中の札は入力できません"],
                   ] as const).map(([v, t, d]) => (
                     <button
                       key={v}

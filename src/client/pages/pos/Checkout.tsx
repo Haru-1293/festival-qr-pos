@@ -1,3 +1,4 @@
+import { CALL_TAG_MAX, normalizeCallTag } from "@shared/callTag";
 import { ArrowLeft, CircleCheck, Minus, Plus, ScanLine, Ticket, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PayResult, PaySession, PayStatus, ProductDto, Quote, QuoteDiscount, QuoteLine, SetDto } from "@shared/api";
@@ -69,7 +70,7 @@ export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRe
   const displayTotal = preview && preview.problems.length === 0 ? preview.total : localTotal;
 
   // 読み取りの関数(カメラの再起動を避けるため固定)から、いつでも最新のカートを読めるようにする
-  const tagNo = tagMode && /^[0-9]{1,3}$/.test(tag) ? Number(tag) : undefined;
+  const tagNo = tagMode && normalizeCallTag(tag) !== null ? normalizeCallTag(tag)! : undefined;
   const latest = useRef({ items, localTotal: displayTotal, coupon, tagNo });
   latest.current = { items, localTotal: displayTotal, coupon, tagNo };
 
@@ -121,7 +122,7 @@ export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRe
             token: value.trim(),
             items: latest.current.items,
             couponCode: latest.current.coupon || undefined,
-            tagNo: latest.current.tagNo,
+            tag: latest.current.tagNo,
           },
         });
         setSession(s);
@@ -557,20 +558,21 @@ export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRe
         </div>
         {tagMode && (
           <label className="flex items-center justify-between gap-3 rounded-xl bg-secondary px-3 py-2">
-            <span className="text-sm font-bold">番号札の番号</span>
+            <span className="text-sm font-bold">番号札(英数字・記号)</span>
             <Input
-              inputMode="numeric"
+              autoCapitalize="characters"
+              autoComplete="off"
               value={tag}
-              onChange={(e) => setTag(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))}
-              placeholder="例: 12"
-              aria-label="番号札の番号"
-              className="h-11 w-28 bg-white text-center text-2xl font-extrabold"
+              onChange={(e) => setTag(e.target.value.replace(/[^\x21-\x7E]/g, "").toUpperCase().slice(0, CALL_TAG_MAX))}
+              placeholder="例: 12 / A5"
+              aria-label="番号札"
+              className="h-11 w-36 bg-white text-center text-2xl font-extrabold"
             />
           </label>
         )}
         <Button
           size="lg"
-          disabled={rows.length === 0 || unavailable || (!!tagMode && (tagNo === undefined || tagNo < 1))}
+          disabled={rows.length === 0 || unavailable || (!!tagMode && tagNo === undefined)}
           onClick={() => {
             setError(null);
             setNotice(null);

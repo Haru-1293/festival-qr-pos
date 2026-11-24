@@ -58,11 +58,11 @@ export const publicRoutes = new Hono<AppEnv>()
     if (!shop || shop.use_call_board !== 1) throw notFound("この店舗では呼び出しボードを使っていません");
     const { results } = await db
       .prepare(
-        `SELECT t.call_no, t.status FROM order_tracking t JOIN orders o ON o.id = t.order_id
+        `SELECT COALESCE(t.call_label, CAST(t.call_no AS TEXT)) AS call_no, t.status FROM order_tracking t JOIN orders o ON o.id = t.order_id
           WHERE t.shop_id = ? AND t.status IN ('PREPARING','READY') AND o.refunded_total < o.total_paid ORDER BY t.created_at, t.rowid LIMIT 200`,
       )
       .bind(shopId)
-      .all<{ call_no: number; status: "PREPARING" | "READY" }>();
+      .all<{ call_no: string; status: "PREPARING" | "READY" }>();
     c.header("Cache-Control", "no-store");
     return c.json({
       shopName: shop.display_name,

@@ -366,7 +366,7 @@ export async function loadPayResult(db: D1Database, orderId: string): Promise<Pa
       .prepare(`SELECT kind, discount_id, coupon_id, name_snapshot, amount FROM order_discounts WHERE order_id = ? ORDER BY apply_seq`)
       .bind(orderId)
       .all<{ kind: QuoteDiscount["kind"]; discount_id: string | null; coupon_id: string | null; name_snapshot: string; amount: number }>(),
-    db.prepare("SELECT call_no FROM order_tracking WHERE order_id = ?").bind(orderId).first<{ call_no: number }>(),
+    db.prepare("SELECT COALESCE(call_label, CAST(call_no AS TEXT)) AS call_no FROM order_tracking WHERE order_id = ?").bind(orderId).first<{ call_no: string }>(),
   ]);
   return {
     orderId: o.id,

@@ -33,6 +33,13 @@ export interface ShopDto {
   sortOrder: number;
 }
 
+export interface ShopNameHistoryItem {
+  displayName: string;
+  /** この名前になった時刻(最初の名前は 0) */
+  validFrom: number;
+  changedBy: string | null;
+}
+
 export interface UserDto {
   id: string;
   role: Role;
@@ -365,7 +372,7 @@ export interface PayResult {
   balanceAfter: number;
   paidAt: number;
   /** 呼び出し番号(店舗が注文ステータスのオプションを使っているときだけ) */
-  callNo: number | null;
+  callNo: string | null;
   lines: QuoteLine[];
   subtotal: number;
   discounts: QuoteDiscount[];
@@ -672,6 +679,8 @@ export interface AuditEntryDto {
   id: string;
   /** 操作者または対象の店舗(わかるもののみ) */
   shopName?: string | null;
+  /** 店舗名が変更されていて、ログ当時の名前と今の名前が違うときの、今の名前 */
+  currentShopName?: string | null;
   createdAt: number;
   actorNickname: string | null;
   actorRole: string | null;
@@ -703,7 +712,7 @@ export interface ActiveOrderDto {
   orderId: string;
   orderNo: string;
   shopName: string;
-  callNo: number;
+  callNo: string;
   /** PREPARING = 調理中・調理待ち / READY = 呼び出し中(受け取りに来てください) */
   status: "PREPARING" | "READY";
   paidAt: number;
@@ -712,7 +721,7 @@ export interface ActiveOrderDto {
 
 export interface TrackedOrderDto {
   orderId: string;
-  callNo: number;
+  callNo: string;
   status: FulfillmentStatus;
   createdAt: number;
   updatedAt: number;
@@ -721,8 +730,8 @@ export interface TrackedOrderDto {
 
 export interface CallBoardDto {
   shopName: string;
-  preparing: number[];
-  ready: number[];
+  preparing: string[];
+  ready: string[];
   serverTime: number;
 }
 

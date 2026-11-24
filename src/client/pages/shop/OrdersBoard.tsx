@@ -1,3 +1,4 @@
+import { CALL_TAG_MAX } from "@shared/callTag";
 import { ChefHat, Check, HandPlatter, Pencil, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { TrackedOrderDto } from "@shared/api";
@@ -26,7 +27,7 @@ function OrderCard({
   o: TrackedOrderDto;
   now: number;
   onMove: (id: string, s: "PREPARING" | "READY" | "DONE") => void;
-  onRenumber: (id: string, callNo: number) => Promise<boolean>;
+  onRenumber: (id: string, callNo: string) => Promise<boolean>;
   busy: boolean;
 }) {
   const ready = o.status === "READY";
@@ -40,11 +41,11 @@ function OrderCard({
             className="flex items-center gap-1"
             onSubmit={(e) => {
               e.preventDefault();
-              void onRenumber(o.orderId, Number(val)).then((ok) => ok && setEditing(false));
+              void onRenumber(o.orderId, val).then((ok) => ok && setEditing(false));
             }}
           >
-            <Input inputMode="numeric" autoFocus aria-label="新しい番号" value={val} onChange={(e) => setVal(e.target.value.replace(/[^0-9]/g, "").slice(0, 3))} className="h-10 w-20 text-center text-xl font-bold" />
-            <Button type="submit" size="sm" disabled={busy || val === "" || Number(val) < 1}>
+            <Input autoFocus autoCapitalize="characters" autoComplete="off" aria-label="新しい番号札" value={val} onChange={(e) => setVal(e.target.value.replace(/[^\x21-\x7E]/g, "").toUpperCase().slice(0, CALL_TAG_MAX))} className="h-10 w-28 text-center text-xl font-bold" />
+            <Button type="submit" size="sm" disabled={busy || val === ""}>
               変更
             </Button>
             <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(false)}>
@@ -129,7 +130,7 @@ export function OrdersBoard({ shopId }: { shopId: string }) {
     });
 
   /** 番号の付け替え(番号札の取り違えなどの直し)。成功したら true */
-  const onRenumber = async (orderId: string, callNo: number): Promise<boolean> => {
+  const onRenumber = async (orderId: string, callNo: string): Promise<boolean> => {
     let ok = false;
     await move.run(async () => {
       await api(`/orders/${shopId}/${orderId}/call-no`, { body: { callNo } });

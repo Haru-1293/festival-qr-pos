@@ -58,7 +58,7 @@ charge $R1 $ALICE 20000; check "チャージ(アリス)" 201
 charge $R1 $BOB 20000; check "チャージ(ボブ)" 201
 scanTag() { # scanTag <customerJar> <tagNo or ""> [qr]
   QR=${3:-$(newQr "$1")}
-  local tg=""; [ -n "$2" ] && tg=",\"tagNo\":$2"
+  local tg=""; [ -n "$2" ] && tg=",\"tag\":\"$2\""
   req $CLERK POST /api/pos/$SA/pay/scan "{\"token\":\"$QR\",\"items\":$(items $YAKI 1)$tg}"; }
 commit() { local s; s=$(jget "['sessionId']"); local t; t=$(jget "['quote']['total']")
   req $CLERK POST /api/pos/$SA/pay/$s/commit "{\"requestId\":\"$(rid)\",\"expectedTotal\":$t}"; ORDER=$(jget "['orderId']"); CALLNO=$(jget "['callNo']"); }
@@ -92,14 +92,15 @@ expect "設定が変わると署名も変わる" 1 "$([ "$(jget "['signature']")
 Q=$(newQr $ALICE)
 scanTag $ALICE "" $Q; check "番号札なしは400" 400
 expect "理由" TAG_REQUIRED "$(jget "['error']['code']")"
-scanTag $ALICE 0 $Q; check "0は400" 400
-scanTag $ALICE 1000 $Q; check "1000は400" 400
-scanTag $ALICE 1.5 $Q; check "小数は400" 400
+scanTag $ALICE "A B" $Q; check "スペースを含む札は400" 400
+expect "理由" TAG_INVALID "$(jget "['error']['code']")"
+scanTag $ALICE "ABCDEFGHI" $Q; check "9文字は400" 400
+scanTag $ALICE "あ1" $Q; check "全角は400" 400
 scanTag $ALICE 12 $Q; check "同じQRで、番号札を入れ直して読める(QRは消費されていない)" 200
 commit; check "確定" 200
 expect "番号札の番号が呼び出し番号になる" 12 "$CALLNO"; O12=$ORDER
 expect "追跡の番号" 12 "$(sqlv "SELECT call_no FROM order_tracking WHERE order_id='$O12'")"
-req $CLERK GET /api/orders/$SA/active; expect "店員の一覧にも12" 1 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(sum(1 for o in d['orders'] if o['callNo']==12))")"
+req $CLERK GET /api/orders/$SA/active; expect "店員の一覧にも12" 1 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(sum(1 for o in d['orders'] if o['callNo']=='12'))")"
 Q2=$(newQr $BOB)
 scanTag $BOB 12 $Q2; check "使用中の番号札は409" 409
 expect "理由" TAG_IN_USE "$(jget "['error']['code']")"
@@ -111,25 +112,25 @@ scanTag $BOB 12; check "受け渡し済みの番号は再利用できる" 200; c
 req $ALICE GET /api/wallet/active-orders; expect "受け渡し済みはスマホから消える" 0 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(sum(1 for o in d['orders'] if o['orderId']=='$O12'))")"
 
 echo "== 番号の付け替え =="
-cn() { req "$1" POST /api/orders/$SA/$2/call-no "{\"callNo\":$3}"; }
+cn() { req "$1" POST /api/orders/$SA/$2/call-no "{\"callNo\":\"$3\"}"; }
 cn $CLERK $O13 14; check "店員が付け替える" 200
 expect "追跡の番号" 14 "$(sqlv "SELECT call_no FROM order_tracking WHERE order_id='$O13'")"
 expect "監査に残る" 1 "$(sqlv "SELECT COUNT(*) FROM audit_logs WHERE action='order.call_no' AND target_id='$O13'")"
 cn $CLERK $O13 12; check "使用中の番号へは付け替えられない" 409
-cn $CLERK $O13 0; check "0は400" 400
-cn $CLERK $O13 1000; check "1000は400" 400
+cn $CLERK $O13 "A B"; check "スペース入りは400" 400
+cn $CLERK $O13 ""; check "空は400" 400
 cn $MGR $O13 14; check "同じ番号なら何もしない" 200
 cn $MGRB $O13 20; check "他店の責任者は不可" 403
 cn $ALICE $O13 20; check "お客様は不可" 403
 cn $CLERK $O12 30; check "受け渡し済みは不可" 400
-req $CLERK POST /api/orders/$SB/$O13/call-no '{"callNo":20}'; check "他店のURLでは不可" 403
+req $CLERK POST /api/orders/$SB/$O13/call-no '{"callNo":"20"}'; check "他店のURLでは不可" 403
 cn $MGR $O13 15; check "店舗責任者も付け替えられる" 200
 
 echo "== スマホの受け取り待ち =="
 req $BOB GET /api/wallet/active-orders; expect "ボブの注文(13→15と、12)" 2 "$(jget "['orders'].__len__()")"
 expect "最新順で、12が先頭" 12 "$(jget "['orders'][0]['callNo']")"
 req $ALICE GET /api/wallet/active-orders; expect "アリスの注文は、自動の番号1(呼び出し中)だけ" 1 "$(jget "['orders'].__len__()")"
-expect "他人の注文は見えない" 0 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(sum(1 for o in d['orders'] if o['callNo'] in (12,15)))")"
+expect "他人の注文は見えない" 0 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(sum(1 for o in d['orders'] if o['callNo'] in ('12','15')))")"
 req $ANON GET /api/wallet/active-orders; check "未ログインは401" 401
 req $CLERK GET /api/wallet/active-orders; check "店員は不可" 403
 req $MGR GET /api/wallet/active-orders; check "責任者は不可" 403
@@ -142,8 +143,30 @@ scanTag $ALICE 15; check "取り消した注文の番号札は再利用できる
 
 echo "== 呼び出しボード =="
 req $ANON GET /api/public/shops/$SA/board; check "ボード" 200
-expect "番号札の番号が出る" 1 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(1 if 12 in d['preparing'] else 0)")"
-expect "取り消した番号は出ない" 0 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(1 if 15 in d['preparing'] else 0)")"
+expect "番号札の番号が出る" 1 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(1 if '12' in d['preparing'] else 0)")"
+expect "取り消した番号は出ない" 0 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(1 if '15' in d['preparing'] else 0)")"
+
+echo "== 英数字・記号の札 =="
+scanTag $ALICE "a-5"; check "小文字は大文字にそろえて受け付ける" 200; commit; expect "A-5" "A-5" "$CALLNO"; OA5=$ORDER
+expect "札は call_label に持つ" "A-5" "$(sqlv "SELECT call_label FROM order_tracking WHERE order_id='$OA5'")"
+req $ALICE GET /api/wallet/active-orders; expect "スマホにも A-5" 1 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(sum(1 for o in d['orders'] if o['callNo']=='A-5'))")"
+req $ANON GET /api/public/shops/$SA/board; expect "ボードにも A-5" 1 "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(1 if 'A-5' in d['preparing'] else 0)")"
+scanTag $BOB "A-5"; check "使用中の A-5 は409" 409
+scanTag $BOB "a-5"; check "小文字でも同じ札として409" 409
+expect "理由" TAG_IN_USE "$(jget "['error']['code']")"
+scanTag $BOB '#!%'; check "記号だけの札も使える" 200; commit; expect "記号札" '#!%' "$CALLNO"; OSYM=$ORDER
+cn $CLERK $OSYM "b7"; check "英字へ付け替え" 200
+expect "付け替え後" "B7" "$(sqlv "SELECT call_label FROM order_tracking WHERE order_id='$OSYM'")"
+cn $CLERK $OSYM "A-5"; check "使用中の A-5 へは付け替えられない" 409
+cn $CLERK $OSYM "77"; check "数字へ付け替え" 200
+expect "数字は call_no に持ち、call_label は空" "77|None" "$(sqlv "SELECT call_no || '|' || COALESCE(call_label,'None') FROM order_tracking WHERE order_id='$OSYM'")"
+scanTag $BOB "007"; check "先頭が0の数字は別の札" 200; commit; expect "007" "007" "$CALLNO"
+status $OA5 DONE
+scanTag $BOB "A-5"; check "受け渡し済みの A-5 は再利用できる" 200
+# 数字の札を、自動の番号と同じ名前として扱う(自動モードの番号と衝突しない)
+req $CLERK POST /api/orders/$SA/$OSYM/cancel "{\"requestId\":\"$(rid)\",\"reason\":\"テスト\",\"restoreStock\":false}"; check "取消し" 201
+scanTag $ALICE "B7"; check "取り消した札は再利用できる" 200
+req $CLERK GET /api/orders/$SA/active; expect "店員の一覧の呼び出し名は文字列" str "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print(type(d['orders'][0]['callNo']).__name__)")"
 
 echo "== 他店は影響を受けない =="
 req $MGRB GET /api/shops/$SB/options; expect "他店の方式は自動のまま" AUTO "$(jget "['options']['callMode']")"

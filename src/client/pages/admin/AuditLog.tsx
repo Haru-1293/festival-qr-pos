@@ -218,7 +218,7 @@ export function AuditLog() {
                   <span className="text-xs text-muted-foreground">
                     {e.actorNickname ?? "システム"}
                     {e.actorRole ? `(${ROLE_LABELS[e.actorRole as Role] ?? e.actorRole})` : ""}
-                    {e.shopName ? ` ・ ${e.shopName}` : ""}
+                    {e.shopName ? ` ・ ${e.shopName}` : ""}{e.currentShopName ? `(現在の店舗名: ${e.currentShopName})` : ""}
                     {e.targetType ? ` ・ ${e.targetType}` : ""}
                     {e.reason ? ` ・ 理由: ${e.reason}` : ""}
                   </span>

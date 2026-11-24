@@ -5,7 +5,8 @@ import type { AppEnv } from "../env";
 import { auditStmtIfExists } from "../lib/audit";
 import { badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { orderNo } from "../lib/order";
-import { isCallNoActive } from "../lib/callno";
+import { callLabelSql, isCallNoActive } from "../lib/callno";
+import { normalizeCallTag, splitCallTag } from "@shared/callTag";
 import { auditStmtIfExists as auditIfExists } from "../lib/audit";
 import { performRefund } from "./refunds";
 import { zv as zValidator } from "../lib/validate";
@@ -30,13 +31,13 @@ export const orderRoutes = new Hono<AppEnv>()
     if (!shop) throw notFound("店舗が見つかりません");
     const { results } = await db
       .prepare(
-        `SELECT t.order_id, t.call_no, t.status, t.created_at, t.updated_at
+        `SELECT t.order_id, ${callLabelSql("t")} AS call_no, t.status, t.created_at, t.updated_at
            FROM order_tracking t JOIN orders o ON o.id = t.order_id
           WHERE t.shop_id = ? AND t.status IN ('PREPARING','READY') AND o.refunded_total < o.total_paid
           ORDER BY t.created_at, t.rowid LIMIT 200`,
       )
       .bind(shopId)
-      .all<{ order_id: string; call_no: number; status: FulfillmentStatus; created_at: number; updated_at: number }>();
+      .all<{ order_id: string; call_no: string; status: FulfillmentStatus; created_at: number; updated_at: number }>();
     const ids = results.map((r) => r.order_id);
     const items = new Map<string, { name: string; quantity: number }[]>();
     for (let i = 0; i < ids.length; i += 50) {
@@ -81,25 +82,27 @@ export const orderRoutes = new Hono<AppEnv>()
   .post(
     "/:shopId/:orderId/call-no",
     orderParam,
-    zValidator("json", z.object({ callNo: z.number().int().min(1, "番号は1〜999で入力してください").max(999, "番号は1〜999で入力してください") })),
+    zValidator("json", z.object({ callNo: z.string().trim().max(20) })),
     async (c) => {
       const auth = requireAuth(c);
       const { shopId, orderId } = c.req.valid("param");
       assertShopAccess(auth, shopId);
-      const { callNo } = c.req.valid("json");
+      const callNo = normalizeCallTag(c.req.valid("json").callNo);
+      if (callNo === null) throw badRequest("呼び出し札は半角の英数字・記号で8文字までです(スペース不可)", "TAG_INVALID");
+      const split = splitCallTag(callNo);
       const db = c.env.DB;
-      const cur = await db.prepare("SELECT call_no, status FROM order_tracking WHERE order_id = ? AND shop_id = ?").bind(orderId, shopId).first<{ call_no: number; status: string }>();
+      const cur = await db.prepare(`SELECT ${callLabelSql("t")} AS call_no, t.status FROM order_tracking t WHERE t.order_id = ? AND t.shop_id = ?`).bind(orderId, shopId).first<{ call_no: string; status: string }>();
       if (!cur) throw notFound("注文が見つかりません");
       if (cur.status === "DONE") throw badRequest("受け渡し済みの注文の番号は変えられません", "ORDER_DELIVERED");
       if (cur.call_no === callNo) return c.json({ ok: true, callNo });
       if (await isCallNoActive(db, shopId, callNo, orderId)) throw conflict(`番号 ${callNo} は、まだ受け渡しが済んでいない別の注文で使われています`, "CALL_NO_IN_USE");
       const now = Date.now();
       const res = await db.batch([
-        db.prepare("UPDATE order_tracking SET call_no = ?, updated_at = ? WHERE order_id = ? AND shop_id = ? AND status <> 'DONE'").bind(callNo, now, orderId, shopId),
+        db.prepare("UPDATE order_tracking SET call_label = ?, call_no = COALESCE(?, call_no), updated_at = ? WHERE order_id = ? AND shop_id = ? AND status <> 'DONE'").bind(split.label, split.callNo, now, orderId, shopId),
         auditIfExists(
           db,
           { actor: auth, action: "order.call_no", targetType: "order", targetId: orderId, before: { callNo: cur.call_no }, after: { callNo } },
-          "SELECT 1 FROM order_tracking WHERE order_id = ? AND call_no = ? AND updated_at = ?",
+          "SELECT 1 FROM order_tracking WHERE order_id = ? AND COALESCE(call_label, CAST(call_no AS TEXT)) = ? AND updated_at = ?",
           [orderId, callNo, now],
         ),
       ]);
@@ -115,13 +118,13 @@ export const orderRoutes = new Hono<AppEnv>()
     const since = Date.now() - CLERK_CANCEL_WINDOW_MS;
     const { results } = await c.env.DB
       .prepare(
-        `SELECT o.id, o.paid_at, o.total_paid, o.refunded_total, t.call_no, t.status AS tstatus,
+        `SELECT o.id, o.paid_at, o.total_paid, o.refunded_total, ${callLabelSql("t")} AS call_no, t.status AS tstatus,
                 (SELECT group_concat(name_snapshot || '×' || quantity, ' / ') FROM order_lines l WHERE l.order_id = o.id) AS items
            FROM orders o LEFT JOIN order_tracking t ON t.order_id = o.id
           WHERE o.shop_id = ? AND o.paid_at >= ? AND o.refunded_total = 0 ORDER BY o.paid_at DESC LIMIT 50`,
       )
       .bind(shopId, since)
-      .all<{ id: string; paid_at: number; total_paid: number; refunded_total: number; call_no: number | null; tstatus: FulfillmentStatus | null; items: string | null }>();
+      .all<{ id: string; paid_at: number; total_paid: number; refunded_total: number; call_no: string | null; tstatus: FulfillmentStatus | null; items: string | null }>();
     c.header("Cache-Control", "no-store");
     return c.json({
       orders: results.map((r) => ({

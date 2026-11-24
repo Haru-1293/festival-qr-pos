@@ -11,6 +11,7 @@ import { hashPassword } from "../lib/crypto";
 import { badRequest, conflict, notFound } from "../lib/errors";
 import { getExpiryPolicy, validatePolicy } from "../lib/expiry";
 import { newId } from "../lib/ids";
+import { historyStmt } from "../lib/shopname";
 import { SETTING_KEYS, getCurrency, getOperations, setSettingStmt } from "../lib/settings";
 import { buildReceptionQrIssue, createStaffUser, getUserBasic, isUniqueViolation, listUsers } from "../lib/users";
 import { nicknameSchema, passwordSchema, staffLoginIdSchema } from "../lib/validation";
@@ -73,6 +74,7 @@ export const adminRoutes = new Hono<AppEnv>()
         c.env.DB.prepare(
           "INSERT INTO shops (id, name, display_name, status, sort_order, created_at) VALUES (?, ?, ?, 'ACTIVE', ?, ?)",
         ).bind(id, b.name, b.displayName, b.sortOrder, Date.now()),
+        c.env.DB.prepare("INSERT INTO shop_name_history (id, shop_id, display_name, valid_from, changed_by) VALUES (?, ?, ?, 0, NULL)").bind(newId(), id, b.displayName),
         auditStmt(c.env.DB, { actor: auth, action: "shop.create", targetType: "shop", targetId: id, after: b }),
       ]);
       return c.json({ shop: { id, name: b.name, displayName: b.displayName, status: "ACTIVE", sortOrder: b.sortOrder } satisfies ShopDto }, 201);
@@ -112,6 +114,7 @@ export const adminRoutes = new Hono<AppEnv>()
           next.sort_order,
           id,
         ),
+        ...(next.display_name !== before.display_name ? [historyStmt(c.env.DB, auth, id, next.display_name, Date.now())] : []),
         auditStmt(c.env.DB, {
           actor: auth,
           action: "shop.update",

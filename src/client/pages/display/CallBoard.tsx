@@ -1,3 +1,4 @@
+import { compareCallLabels } from "@shared/callTag";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { CallBoardDto } from "@shared/api";
@@ -12,12 +13,12 @@ export function CallBoardPage() {
   const { shopId } = useParams();
   const [data, setData] = useState<CallBoardDto | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fresh, setFresh] = useState<Set<number>>(new Set());
+  const [fresh, setFresh] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!shopId) return;
     let alive = true;
-    let prevReady = new Set<number>();
+    let prevReady = new Set<string>();
     const load = async () => {
       try {
         const r = await api<CallBoardDto>(`/public/shops/${shopId}/board`);
@@ -53,7 +54,7 @@ export function CallBoardPage() {
             <h2 className="text-xl font-extrabold text-amber-700 sm:text-2xl">調理中・調理待ち</h2>
             <div className="flex flex-wrap content-start gap-2">
               {data.preparing.length === 0 && <p className="text-neutral-400">なし</p>}
-              {data.preparing.map((n) => (
+              {[...data.preparing].sort(compareCallLabels).map((n) => (
                 <span key={n} className="flex min-w-16 items-center justify-center rounded-xl border border-amber-300 bg-white px-3 py-2 text-3xl font-bold text-neutral-800 sm:text-5xl">
                   {n}
                 </span>
@@ -65,8 +66,8 @@ export function CallBoardPage() {
             <h2 className="text-2xl font-extrabold text-emerald-700 sm:text-3xl">呼び出し中</h2>
             <div className="flex flex-wrap content-start gap-3">
               {data.ready.length === 0 && <p className="text-lg text-neutral-400">いまお呼びしている番号はありません</p>}
-              {data.ready.map((n) => (
-                <span key={n} className={cn("flex min-w-28 items-center justify-center rounded-2xl bg-emerald-600 px-5 py-3 text-6xl font-black text-white shadow-sm sm:text-8xl", fresh.has(n) && "animate-pulse ring-8 ring-emerald-300")}>
+              {[...data.ready].sort(compareCallLabels).map((n) => (
+                <span key={n} className={cn("flex min-w-28 items-center justify-center rounded-2xl bg-emerald-600 px-5 py-3 text-6xl font-black text-white shadow-sm sm:text-8xl", n.length > 4 && "text-5xl sm:text-6xl", fresh.has(n) && "animate-pulse ring-8 ring-emerald-300")}>
                   {n}
                 </span>
               ))}

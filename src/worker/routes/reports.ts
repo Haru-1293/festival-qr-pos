@@ -5,6 +5,7 @@ import type { AppEnv } from "../env";
 import { badRequest, notFound } from "../lib/errors";
 import { zv as zValidator } from "../lib/validate";
 import { assertShopAccess, requireAuth, requireRole } from "../middleware/auth";
+import { shopNameAtSql } from "../lib/shopname";
 
 const range = z.object({
   from: z.coerce.number().int().min(0).optional(),
@@ -320,7 +321,7 @@ export const reportRoutes = new Hono<AppEnv>()
     const rows = await auditRows(c.env.DB, { ...c.req.valid("query"), limit: 1000 }, 1000);
     return csvResponse("audit.csv", [
       ["日時(日本時間)", "操作者", "役割", "店舗", "操作", "対象の種類", "対象ID", "理由", "変更前", "変更後"],
-      ...rows.map((r) => [jst(r.createdAt), r.actorNickname, r.actorRole, r.shopName ?? "", r.action, r.targetType, r.targetId, r.reason, r.before, r.after]),
+      ...rows.map((r) => [jst(r.createdAt), r.actorNickname, r.actorRole, r.shopName ? (r.currentShopName ? `${r.shopName}(現在の店舗名: ${r.currentShopName})` : r.shopName) : "", r.action, r.targetType, r.targetId, r.reason, r.before, r.after]),
     ]);
   });
 
@@ -370,16 +371,17 @@ async function auditRows(db: D1Database, o: Partial<AuditFilter> & { order?: "de
   const dir = asc ? "ASC" : "DESC";
   const { results } = await db
     .prepare(
-      `SELECT a.id, a.created_at, a.actor_role, a.action, a.target_type, a.target_id, a.reason, a.before_json, a.after_json, u.nickname, s.display_name AS shop_name
+      `SELECT a.id, a.created_at, a.actor_role, a.action, a.target_type, a.target_id, a.reason, a.before_json, a.after_json, u.nickname, ${shopNameAtSql("a.shop_id", "a.created_at", "s.display_name")} AS shop_name, s.display_name AS current_shop_name
          FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_user_id LEFT JOIN shops s ON s.id = a.shop_id
         ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY a.created_at ${dir}, a.id ${dir} LIMIT ?`,
     )
     .bind(...args, limit)
-    .all<{ id: string; created_at: number; actor_role: string | null; action: string; target_type: string | null; target_id: string | null; reason: string | null; before_json: string | null; after_json: string | null; nickname: string | null; shop_name: string | null }>();
+    .all<{ id: string; created_at: number; actor_role: string | null; action: string; target_type: string | null; target_id: string | null; reason: string | null; before_json: string | null; after_json: string | null; nickname: string | null; shop_name: string | null; current_shop_name: string | null }>();
   return results.map((r) => ({
     id: r.id,
     createdAt: r.created_at,
     shopName: r.shop_name,
+    currentShopName: r.current_shop_name !== r.shop_name ? r.current_shop_name : null,
     actorNickname: r.nickname,
     actorRole: r.actor_role,
     action: r.action,

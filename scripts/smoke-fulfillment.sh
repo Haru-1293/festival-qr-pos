@@ -117,11 +117,11 @@ expect "商品が見える" 焼きそば "$(jget "['orders'][0]['items'][0]['nam
 req $TMP/none.jar GET /api/orders/$SA/active; check "未ログインは401" 401
 req $MGRB GET /api/orders/$SA/active; check "他店舗は403" 403
 req $ANON GET /api/public/shops/$SA/board; check "ボード(ログイン不要)" 200
-expect "ボード: 調理中" "[1, 2]" "$(jget "['preparing']")"
+expect "ボード: 調理中" "['1', '2']" "$(jget "['preparing']")"
 expect "ボード: 提供可能" "[]" "$(jget "['ready']")"
 expect "ボードに個人情報は含まれない" "['preparing', 'ready', 'serverTime', 'shopName']" "$(jget ".keys().__class__ and sorted(d.keys())")"
 req $CLERK POST /api/orders/$SA/$O1/status '{"status":"READY"}'; check "提供可能にする" 200
-req $ANON GET /api/public/shops/$SA/board; expect "ボード: 調理中[2]" "[2]" "$(jget "['preparing']")"; expect "ボード: 提供可能[1]" "[1]" "$(jget "['ready']")"
+req $ANON GET /api/public/shops/$SA/board; expect "ボード: 調理中[2]" "['2']" "$(jget "['preparing']")"; expect "ボード: 提供可能[1]" "['1']" "$(jget "['ready']")"
 req $CLERK POST /api/orders/$SB/$O1/status '{"status":"DONE"}'; check "他店舗の経路では変更できない" 403
 req $MGRB POST /api/orders/$SB/$O1/status '{"status":"DONE"}'; check "別店舗の注文は404" 404
 req $CLERK POST /api/orders/$SA/$O1/status '{"status":"DONE"}'; check "受け渡し済み" 200

@@ -3,7 +3,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { auditStmt } from "../lib/audit";
-import type { ReceptionQrIssued, ShopOptions } from "@shared/api";
+import type { ReceptionQrIssued, ShopNameHistoryItem, ShopOptions } from "@shared/api";
+import { renameStmts } from "../lib/shopname";
 import { hashPassword } from "../lib/crypto";
 import { badRequest, conflict, notFound } from "../lib/errors";
 import { buildLoginQrIssue, createStaffUser, getUserBasic, isUniqueViolation, listUsers } from "../lib/users";
@@ -41,6 +42,41 @@ export const shopRoutes = new Hono<AppEnv>()
     ]);
     if ((res[0].meta.changes ?? 0) === 0) throw notFound("店舗が見つかりません");
     return c.json({ ok: true });
+  })
+  // 店舗名と変更履歴。店舗責任者(自店舗)と全体管理者が見られる
+  .get("/:shopId/name", shopParam, async (c) => {
+    const auth = requireAuth(c);
+    const { shopId } = c.req.valid("param");
+    assertShopAccess(auth, shopId);
+    const shop = await c.env.DB.prepare("SELECT display_name FROM shops WHERE id = ?").bind(shopId).first<{ display_name: string }>();
+    if (!shop) throw notFound("店舗が見つかりません");
+    const { results } = await c.env.DB
+      .prepare(
+        `SELECT h.display_name, h.valid_from, u.nickname FROM shop_name_history h LEFT JOIN users u ON u.id = h.changed_by
+          WHERE h.shop_id = ? ORDER BY h.valid_from DESC, h.id DESC LIMIT 50`,
+      )
+      .bind(shopId)
+      .all<{ display_name: string; valid_from: number; nickname: string | null }>();
+    return c.json({
+      displayName: shop.display_name,
+      history: results.map((r) => ({ displayName: r.display_name, validFrom: r.valid_from, changedBy: r.nickname }) satisfies ShopNameHistoryItem),
+    });
+  })
+  // 店舗名の変更。店舗責任者(自店舗)と全体管理者。過去の注文・ログは同じ店舗のまま、その時点の名前で見られる
+  .post("/:shopId/rename", shopParam, zValidator("json", z.object({ displayName: z.string().trim().min(1, "店舗名を入力してください").max(50, "店舗名は50文字までです") })), async (c) => {
+    const auth = requireAuth(c);
+    const { shopId } = c.req.valid("param");
+    assertShopAccess(auth, shopId);
+    const { displayName } = c.req.valid("json");
+    const db = c.env.DB;
+    const cur = await db.prepare("SELECT display_name FROM shops WHERE id = ?").bind(shopId).first<{ display_name: string }>();
+    if (!cur) throw notFound("店舗が見つかりません");
+    if (cur.display_name === displayName) return c.json({ ok: true, displayName, changed: false });
+    const dup = await db.prepare("SELECT 1 FROM shops WHERE display_name = ? AND id <> ? LIMIT 1").bind(displayName, shopId).first();
+    if (dup) throw conflict("同じ名前の店舗がすでにあります。別の名前にしてください", "SHOP_NAME_TAKEN");
+    const res = await db.batch(renameStmts(db, auth, shopId, cur.display_name, displayName, Date.now()));
+    if ((res[0].meta.changes ?? 0) === 0) throw conflict("店舗名がほかの操作で変わりました。画面を開き直してください", "STATE_CHANGED");
+    return c.json({ ok: true, displayName, changed: true });
   })
   .get("/:shopId/staff", shopParam, async (c) => {
     const auth = requireAuth(c);
