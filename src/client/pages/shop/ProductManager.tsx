@@ -1,8 +1,9 @@
 import { Archive, Pencil, Plus, Warehouse } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { PriceCutDto, ProductDto, SaleMode, TagDto } from "@shared/api";
 import { PriceView } from "@/components/PriceView";
 import { ErrorText, Field } from "@/components/Shell";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -75,16 +76,6 @@ export function ProductManager({ shopId }: { shopId: string }) {
   useEffect(() => {
     void load().catch(() => undefined);
   }, [load]);
-
-  // 編集・登録の入力欄は一覧の上にあるので、開いたらそこへ移動する(一覧の下の方で「編集」を押しても反応したように見える)
-  const formRef = useRef<HTMLDivElement>(null);
-  const opened = draft !== null;
-  const editingId = draft?.id;
-  useEffect(() => {
-    if (!opened) return;
-    formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    formRef.current?.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
-  }, [opened, editingId]);
 
   const edit = (p: ProductDto) =>
     setDraft({
@@ -192,14 +183,15 @@ export function ProductManager({ shopId }: { shopId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      {draft ? (
-        <div ref={formRef} className="scroll-mt-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>{draft.id ? "商品を編集" : "商品を登録"}</CardTitle>
-            {cut && <CardDescription>いま「{cut.name}」の値下げ中です。ここで入力するのは定価です。</CardDescription>}
-          </CardHeader>
-          <CardContent>
+      <Button size="lg" onClick={() => setDraft({ ...EMPTY })}>
+        <Plus /> 商品を登録する
+      </Button>
+      {/* 編集・登録は、いま見ている場所の上に重ねて開く(一覧が長くても見失わない) */}
+      <Dialog open={draft !== null} onOpenChange={(o) => !o && !form.pending && setDraft(null)}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
+          <DialogTitle>{draft?.id ? "商品を編集" : "商品を登録"}</DialogTitle>
+          <DialogDescription>{cut ? `いま「${cut.name}」の値下げ中です。ここで入力するのは定価です。` : "変更はレジ画面へすぐ反映されます"}</DialogDescription>
+          {draft && (
             <form onSubmit={save} className="flex flex-col gap-3">
               <Field label="商品名">
                 <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} maxLength={60} required />
@@ -300,14 +292,9 @@ export function ProductManager({ shopId }: { shopId: string }) {
                 </Button>
               </div>
             </form>
-          </CardContent>
-        </Card>
-        </div>
-      ) : (
-        <Button size="lg" onClick={() => setDraft({ ...EMPTY })}>
-          <Plus /> 商品を登録する
-        </Button>
-      )}
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader>
