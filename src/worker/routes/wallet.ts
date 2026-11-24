@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { z } from "zod";
+import { zv as zValidator } from "../lib/validate";
 import type { ActiveOrderDto, HistoryItem, WalletQrResponse } from "@shared/api";
 import type { AppEnv } from "../env";
 import { randomToken, sha256Hex } from "../lib/crypto";
@@ -8,6 +10,20 @@ import { getOperations } from "../lib/settings";
 import { orderNo } from "../lib/order";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { shopNameAtSql } from "../lib/shopname";
+
+const HISTORY_KINDS: Record<string, string[] | undefined> = {
+  all: undefined,
+  charge: ["CHARGE", "CHARGE_CORRECTION", "ADJUSTMENT"],
+  payment: ["PAYMENT"],
+  refund: ["REFUND", "PAYOUT"],
+};
+const historyQuery = z.object({
+  kind: z.enum(["all", "charge", "payment", "refund"]).default("all"),
+  from: z.coerce.number().int().min(0).optional(),
+  to: z.coerce.number().int().min(0).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().regex(/^\d{1,16}:[A-Za-z0-9]{26}$/).optional(),
+});
 
 /** 顧客のウォレット。支払い・受付で使うスマホQRを発行する */
 export const walletRoutes = new Hono<AppEnv>()
@@ -20,7 +36,7 @@ export const walletRoutes = new Hono<AppEnv>()
         `SELECT o.id, o.paid_at, COALESCE(t.call_label, CAST(t.call_no AS TEXT)) AS call_no, t.status, s.display_name,
                 (SELECT group_concat(name_snapshot || '×' || quantity, ' / ') FROM order_lines l WHERE l.order_id = o.id) AS items
            FROM wallets w JOIN orders o ON o.wallet_id = w.id JOIN order_tracking t ON t.order_id = o.id JOIN shops s ON s.id = o.shop_id
-          WHERE w.owner_user_id = ? AND o.paid_at >= ? AND t.status IN ('PREPARING','READY') AND o.refunded_total < o.total_paid
+          WHERE w.owner_user_id = ? AND o.paid_at >= ? AND t.status IN ('PREPARING','READY') AND (o.refunded_total < o.total_paid OR o.total_paid = 0)
           ORDER BY o.paid_at DESC LIMIT 20`,
       )
       .bind(auth.userId, Date.now() - 24 * 3600_000)
@@ -63,9 +79,30 @@ export const walletRoutes = new Hono<AppEnv>()
     ]);
     return c.json({ token, expiresAt, ttlSeconds: qrTtlSeconds } satisfies WalletQrResponse);
   })
-  // 自分の利用履歴(チャージ・支払い・返金・払戻し)。新しい順
-  .get("/history", async (c) => {
+  // 自分の利用履歴(チャージ・支払い・返金・払戻し)。新しい順。種類・期間で絞り込み、1回に最大50件(続きは cursor)
+  .get("/history", zValidator("query", historyQuery), async (c) => {
     const auth = requireAuth(c);
+    const q = c.req.valid("query");
+    const where = ["w.owner_user_id = ?"];
+    const args: (string | number)[] = [auth.userId];
+    const kinds = HISTORY_KINDS[q.kind];
+    if (kinds) {
+      where.push(`l.kind IN (${kinds.map(() => "?").join(",")})`);
+      args.push(...kinds);
+    }
+    if (q.from !== undefined) {
+      where.push("l.created_at >= ?");
+      args.push(q.from);
+    }
+    if (q.to !== undefined) {
+      where.push("l.created_at < ?");
+      args.push(q.to);
+    }
+    if (q.cursor) {
+      const [t, id] = q.cursor.split(":");
+      where.push("(l.created_at < ? OR (l.created_at = ? AND l.id < ?))");
+      args.push(Number(t), Number(t), id);
+    }
     const { results } = await c.env.DB
       .prepare(
         `SELECT l.id, l.kind, l.amount, l.balance_after, l.created_at, l.ref_type, l.ref_id,
@@ -77,13 +114,15 @@ export const walletRoutes = new Hono<AppEnv>()
            LEFT JOIN refunds r ON l.ref_type = 'REFUND' AND r.id = l.ref_id
            LEFT JOIN orders ro ON ro.id = r.order_id
            LEFT JOIN shops sr ON sr.id = ro.shop_id
-          WHERE w.owner_user_id = ?
-          ORDER BY l.created_at DESC, l.id DESC LIMIT 100`,
+          WHERE ${where.join(" AND ")}
+          ORDER BY l.created_at DESC, l.id DESC LIMIT ?`,
       )
-      .bind(auth.userId)
+      .bind(...args, q.limit + 1)
       .all<{ id: string; kind: HistoryItem["kind"]; amount: number; balance_after: number; created_at: number; shop_name: string | null; order_id: string | null }>();
+    const more = results.length > q.limit;
+    const page = more ? results.slice(0, q.limit) : results;
     c.header("Cache-Control", "no-store");
-    const items: HistoryItem[] = results.map((r) => ({
+    const items: HistoryItem[] = page.map((r) => ({
       id: r.id,
       kind: r.kind,
       amount: r.amount,
@@ -92,5 +131,6 @@ export const walletRoutes = new Hono<AppEnv>()
       shopName: r.shop_name,
       orderNo: r.order_id ? orderNo(r.order_id) : null,
     }));
-    return c.json({ items });
+    const last = page[page.length - 1];
+    return c.json({ items, next: more && last ? `${last.created_at}:${last.id}` : null });
   });

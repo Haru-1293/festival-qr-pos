@@ -390,7 +390,7 @@ export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRe
         )}
         <ErrorText message={error} />
         <Button size="lg" onClick={() => void commit()} disabled={busy || short || left === 0}>
-          {busy ? "確定中…" : `${money(quote.total)} の支払いを確定する`}
+          {busy ? "確定中…" : quote.total === 0 ? "支払いなし(0円)で確定する" : `${money(quote.total)} の支払いを確定する`}
         </Button>
         <Button variant="outline" onClick={() => void cancel()} disabled={busy}>
           取り消す

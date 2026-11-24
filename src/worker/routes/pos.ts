@@ -177,10 +177,8 @@ export const posRoutes = new Hono<AppEnv>()
       const recheck = async (walletId: string) => {
         if (couponCode) quote = await quoteCart(db, shopId, items, now, couponCode, walletId);
         if (quote.couponError) throw conflict(quote.couponError, "COUPON_INVALID", { quote: publicQuote(quote) });
-        if (quote.total <= 0) throw badRequest("割引後の合計が0のため、決済は不要です", "ZERO_TOTAL");
       };
       if (quote.couponError) throw conflict(quote.couponError, "COUPON_INVALID", { quote: publicQuote(quote) });
-      if (quote.total <= 0) throw badRequest("合計が0のため、決済は不要です", "ZERO_TOTAL");
 
       const hash = await sha256Hex(token);
       const sessionId = newId(now);
@@ -311,7 +309,7 @@ export const posRoutes = new Hono<AppEnv>()
   .post(
     "/:shopId/pay/:sessionId/commit",
     sessionParam,
-    zValidator("json", z.object({ requestId: requestIdSchema, expectedTotal: z.number().int().min(1), pin: z.string().regex(/^[0-9]{4}$/, "PINは4桁の数字です").optional() })),
+    zValidator("json", z.object({ requestId: requestIdSchema, expectedTotal: z.number().int().min(0), pin: z.string().regex(/^[0-9]{4}$/, "PINは4桁の数字です").optional() })),
     async (c) => {
       const auth = requireAuth(c);
       const { shopId, sessionId } = c.req.valid("param");
@@ -471,6 +469,9 @@ export const posRoutes = new Hono<AppEnv>()
               WHERE s.id = ? AND s.status = 'COMMITTED' AND s.order_id IS NULL`,
           )
           .bind(orderId, orderNo(orderId), shopId, auth.userId, quote.subtotal, quote.discountTotal, quote.total, requestId, now, sessionId),
+        ...(quote.total === 0
+          ? []
+          : [
         // 残高の減算。足りなければ CHECK 制約が全体を巻き戻す
         db
           .prepare(`UPDATE wallets SET balance = balance - ? WHERE id = ? AND ${orderExists}`)
@@ -482,6 +483,7 @@ export const posRoutes = new Hono<AppEnv>()
           )
           .bind(ledgerId, -quote.total, orderId, auth.userId, `pay:${requestId}`, now, s.wallet_id, orderId),
         db.prepare(`UPDATE orders SET ledger_id = ? WHERE id = ? AND ${orderExists}`).bind(ledgerId, orderId, orderId),
+          ]),  // 合計0円(クーポン等で全額引き)のときは、残高も台帳も動かさず、注文だけ記録する
         db
           .prepare(`UPDATE payment_sessions SET order_id = ? WHERE id = ? AND ${orderExists}`)
           .bind(orderId, sessionId, orderId),
@@ -493,7 +495,7 @@ export const posRoutes = new Hono<AppEnv>()
               WHERE order_id = ?2 AND ?1 IS NOT NULL AND ${orderExists.replace("?", "?2")}
                 AND NOT EXISTS (SELECT 1 FROM order_tracking t2 JOIN orders o2 ON o2.id = t2.order_id
                                  WHERE t2.shop_id = order_tracking.shop_id AND t2.order_id <> order_tracking.order_id AND ${callLabelSql("t2")} = ?1
-                                   AND t2.status IN ('PREPARING','READY') AND o2.refunded_total < o2.total_paid)`,
+                                   AND t2.status IN ('PREPARING','READY') AND (o2.refunded_total < o2.total_paid OR o2.total_paid = 0))`,
           )
           .bind(s.tag_no, orderId, tagSplit.label, tagSplit.callNo),
       );

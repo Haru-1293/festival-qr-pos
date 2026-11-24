@@ -389,34 +389,52 @@ const FILTERS: { id: Filter; label: string }[] = [
 function CardList() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<Filter>("");
-  const [cards, setCards] = useState<CardDto[]>([]);
+  const [cards, setCards] = useState<CardDto[] | null>(null);
+  const [next, setNext] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const params = new URLSearchParams();
-      if (q.trim()) params.set("q", q.trim());
-      if (status === "EXPIRING") params.set("expiring", "7");
-      else if (status) params.set("status", status);
-      const r = await api<{ cards: CardDto[] }>(`/cards?${params}`);
-      setCards(r.cards);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "読み込めませんでした");
-    }
-  }, [q, status]);
-  useEffect(() => {
-    const t = window.setTimeout(() => void load(), 200);
-    return () => window.clearTimeout(t);
-  }, [load]);
+  // データベースの読み取りを節約するため、開いただけ・入力しただけでは読み込まない。「検索」を押したときだけ1回100件まで読む
+  const load = useCallback(
+    async (offset = 0) => {
+      setBusy(true);
+      try {
+        const params = new URLSearchParams({ limit: "100" });
+        if (q.trim()) params.set("q", q.trim());
+        if (status === "EXPIRING") params.set("expiring", "7");
+        else if (status) params.set("status", status);
+        if (offset) params.set("offset", String(offset));
+        const r = await api<{ cards: CardDto[]; next: number | null }>(`/cards?${params}`);
+        setCards((cur) => (offset && cur ? [...cur, ...r.cards] : r.cards));
+        setNext(r.next);
+        setError(null);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "読み込めませんでした");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [q, status],
+  );
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input className="pl-9" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ニックネーム・カード番号・発行バッチで検索" aria-label="カード検索" />
-      </div>
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void load();
+        }}
+      >
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="pl-9" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ニックネーム・カード番号・発行バッチで検索" aria-label="カード検索" />
+        </div>
+        <Button type="submit" disabled={busy}>
+          <Search /> 検索
+        </Button>
+      </form>
       <div className="flex flex-wrap gap-1.5">
         {FILTERS.map((f) => (
           <button
@@ -430,10 +448,16 @@ function CardList() {
         ))}
       </div>
       <ErrorText message={error} />
-      {cards.length === 0 && !error && <p className="p-6 text-center text-sm text-muted-foreground">該当するカードがありません</p>}
-      {cards.map((c) => (
+      {cards === null && !error && <p className="p-6 text-center text-sm text-muted-foreground">状態を選んで「検索」を押すと、カードが表示されます(1回100件まで)</p>}
+      {cards?.length === 0 && !error && <p className="p-6 text-center text-sm text-muted-foreground">該当するカードがありません</p>}
+      {cards?.map((c) => (
         <CardRow key={c.id} card={c} open={open === c.id} onToggle={() => setOpen(open === c.id ? null : c.id)} onChanged={() => void load()} />
       ))}
+      {next !== null && (
+        <Button variant="outline" onClick={() => void load(next)} disabled={busy}>
+          {busy ? "読み込み中…" : "さらに表示"}
+        </Button>
+      )}
     </div>
   );
 }

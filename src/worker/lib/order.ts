@@ -331,7 +331,7 @@ export async function quoteCart(
 export async function loadPayResult(db: D1Database, orderId: string): Promise<PayResult | null> {
   const o = await db
     .prepare(
-      `SELECT o.id, o.total_paid, o.subtotal, o.paid_at, l.balance_after FROM orders o LEFT JOIN wallet_ledger l ON l.id = o.ledger_id WHERE o.id = ?`,
+      `SELECT o.id, o.total_paid, o.subtotal, o.paid_at, COALESCE(l.balance_after, (SELECT w.balance FROM wallets w WHERE w.id = o.wallet_id)) AS balance_after FROM orders o LEFT JOIN wallet_ledger l ON l.id = o.ledger_id WHERE o.id = ?`,
     )
     .bind(orderId)
     .first<{ id: string; total_paid: number; subtotal: number; paid_at: number; balance_after: number | null }>();

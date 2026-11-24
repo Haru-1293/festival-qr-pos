@@ -1,4 +1,4 @@
-import { KeyRound, QrCode, UserPlus } from "lucide-react";
+import { KeyRound, QrCode, Search, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { ReceptionQrIssued, ShopDto, UserDto } from "@shared/api";
 import { ROLE_LABELS, type Role } from "@shared/roles";
@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { useAction } from "@/lib/useAction";
 import { formatDateTime } from "@/lib/utils";
 import { useConfirm, useNotify, usePrompt } from "@/lib/confirm";
@@ -27,23 +27,46 @@ export function AdminUsers() {
   const confirm = useConfirm();
   const prompt = usePrompt();
   const notify = useNotify();
-  const [users, setUsers] = useState<UserDto[]>([]);
+  const [users, setUsers] = useState<UserDto[] | null>(null);
+  const [next, setNext] = useState<string | null>(null);
   const [shops, setShops] = useState<ShopDto[]>([]);
   const [filter, setFilter] = useState<Role | "ALL">("ALL");
+  const [q, setQ] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [qr, setQr] = useState<{
     issued: ReceptionQrIssued;
     nickname: string;
   } | null>(null);
 
+  // 一覧はデータベースの読み取りを節約するため、開いただけでは読み込まない。「検索」を押したときだけ、1回100件まで読む
+  const search = useCallback(
+    async (cursor?: string) => {
+      setSearching(true);
+      setSearchError(null);
+      try {
+        const p = new URLSearchParams({ limit: "100" });
+        if (filter !== "ALL") p.set("role", filter);
+        if (q.trim()) p.set("q", q.trim());
+        if (cursor) p.set("cursor", cursor);
+        const r = await api<{ users: UserDto[]; next: string | null }>(`/admin/users?${p}`);
+        setUsers((cur) => (cursor && cur ? [...cur, ...r.users] : r.users));
+        setNext(r.next);
+      } catch (e) {
+        setSearchError(errorMessage(e));
+      } finally {
+        setSearching(false);
+      }
+    },
+    [filter, q],
+  );
+  // 操作のあと: すでに検索していれば、同じ条件で読み直す
   const load = useCallback(async () => {
-    const q = filter === "ALL" ? "" : `?role=${filter}`;
-    const [u, s] = await Promise.all([api<{ users: UserDto[] }>(`/admin/users${q}`), api<{ shops: ShopDto[] }>("/admin/shops")]);
-    setUsers(u.users);
-    setShops(s.shops);
-  }, [filter]);
+    if (users !== null) await search();
+  }, [users, search]);
   useEffect(() => {
-    void load().catch(() => undefined);
-  }, [load]);
+    api<{ shops: ShopDto[] }>("/admin/shops").then((s) => setShops(s.shops)).catch(() => undefined);
+  }, []);
 
   // --- 店舗責任者の登録 ---
   const [mShop, setMShop] = useState("");
@@ -240,11 +263,24 @@ export function AdminUsers() {
               </button>
             ))}
           </div>
+          <form
+            className="flex gap-2 pt-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void search();
+            }}
+          >
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="表示名・ログインID・店舗名で検索(空欄なら全件)" aria-label="ユーザー検索" maxLength={60} />
+            <Button type="submit" disabled={searching}>
+              <Search /> 検索
+            </Button>
+          </form>
         </CardHeader>
         <CardContent className="flex flex-col divide-y divide-border">
-          <ErrorText message={row.error} />
-          {users.length === 0 && <p className="py-2 text-sm text-muted-foreground">該当するユーザーはいません</p>}
-          {users.map((u) => (
+          <ErrorText message={row.error ?? searchError} />
+          {users === null && !searchError && <p className="py-2 text-sm text-muted-foreground">種類を選んで「検索」を押すと、ユーザーが表示されます(1回100件まで)</p>}
+          {users?.length === 0 && <p className="py-2 text-sm text-muted-foreground">該当するユーザーはいません</p>}
+          {users?.map((u) => (
             <div key={u.id} className="flex flex-col gap-2 py-3">
               <div className="flex items-center justify-between gap-2">
                 <div className="min-w-0">
@@ -289,6 +325,13 @@ export function AdminUsers() {
               </div>
             </div>
           ))}
+          {next && (
+            <div className="pt-3">
+              <Button variant="outline" className="w-full" onClick={() => void search(next)} disabled={searching}>
+                {searching ? "読み込み中…" : "さらに表示"}
+              </Button>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

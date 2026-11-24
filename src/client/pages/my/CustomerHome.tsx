@@ -1,5 +1,6 @@
 import { ActiveOrdersCard } from "@/components/ActiveOrdersCard";
 import { HistoryCard } from "@/components/HistoryCard";
+import { PasswordChangeCard } from "@/components/PasswordChangeCard";
 import { PayQrCard } from "@/components/PayQrCard";
 import { Shell } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +46,7 @@ export function CustomerHome() {
         <ActiveOrdersCard />
         <PayQrCard disabled={w?.status !== "ACTIVE" || expired} />
         <HistoryCard balance={w?.balance} />
+        <PasswordChangeCard />
       </div>
     </Shell>
   );

@@ -59,7 +59,7 @@ export const publicRoutes = new Hono<AppEnv>()
     const { results } = await db
       .prepare(
         `SELECT COALESCE(t.call_label, CAST(t.call_no AS TEXT)) AS call_no, t.status FROM order_tracking t JOIN orders o ON o.id = t.order_id
-          WHERE t.shop_id = ? AND t.status IN ('PREPARING','READY') AND o.refunded_total < o.total_paid ORDER BY t.created_at, t.rowid LIMIT 200`,
+          WHERE t.shop_id = ? AND t.status IN ('PREPARING','READY') AND (o.refunded_total < o.total_paid OR o.total_paid = 0) ORDER BY t.created_at, t.rowid LIMIT 200`,
       )
       .bind(shopId)
       .all<{ call_no: string; status: "PREPARING" | "READY" }>();

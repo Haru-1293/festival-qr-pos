@@ -33,7 +33,7 @@ export const orderRoutes = new Hono<AppEnv>()
       .prepare(
         `SELECT t.order_id, ${callLabelSql("t")} AS call_no, t.status, t.created_at, t.updated_at
            FROM order_tracking t JOIN orders o ON o.id = t.order_id
-          WHERE t.shop_id = ? AND t.status IN ('PREPARING','READY') AND o.refunded_total < o.total_paid
+          WHERE t.shop_id = ? AND t.status IN ('PREPARING','READY') AND (o.refunded_total < o.total_paid OR o.total_paid = 0)
           ORDER BY t.created_at, t.rowid LIMIT 200`,
       )
       .bind(shopId)

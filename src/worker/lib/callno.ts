@@ -6,7 +6,7 @@ export async function isCallNoActive(db: D1Database, shopId: string, label: stri
   const r = await db
     .prepare(
       `SELECT 1 FROM order_tracking t JOIN orders o ON o.id = t.order_id
-        WHERE t.shop_id = ? AND ${callLabelSql("t")} = ? AND t.status IN ('PREPARING','READY') AND o.refunded_total < o.total_paid ${exceptOrderId ? "AND t.order_id <> ?" : ""} LIMIT 1`,
+        WHERE t.shop_id = ? AND ${callLabelSql("t")} = ? AND t.status IN ('PREPARING','READY') AND (o.refunded_total < o.total_paid OR o.total_paid = 0) ${exceptOrderId ? "AND t.order_id <> ?" : ""} LIMIT 1`,
     )
     .bind(shopId, label, ...(exceptOrderId ? [exceptOrderId] : []))
     .first();

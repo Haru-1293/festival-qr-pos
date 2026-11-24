@@ -131,10 +131,23 @@ export const adminRoutes = new Hono<AppEnv>()
   // ---------- ユーザー ----------
   .get(
     "/users",
-    zValidator("query", z.object({ role: z.enum(ROLES).optional(), shopId: idSchema.optional() })),
+    zValidator(
+      "query",
+      z.object({
+        role: z.enum(ROLES).optional(),
+        shopId: idSchema.optional(),
+        q: z.string().trim().max(60).optional(),
+        limit: z.coerce.number().int().min(1).max(100).default(50),
+        cursor: z.string().regex(/^\d{1,16}:[A-Za-z0-9]{26}$/).optional(),
+      }),
+    ),
     async (c) => {
-      const { role, shopId } = c.req.valid("query");
-      return c.json({ users: await listUsers(c.env.DB, { role, shopId }) });
+      const { role, shopId, q, limit, cursor } = c.req.valid("query");
+      const rows = await listUsers(c.env.DB, { role, shopId, q: q || undefined, cursor, limit: limit + 1 });
+      const more = rows.length > limit;
+      const users = more ? rows.slice(0, limit) : rows;
+      const last = users[users.length - 1];
+      return c.json({ users, next: more && last ? `${last.createdAt}:${last.id}` : null });
     },
   )
   // 全体管理者の追加

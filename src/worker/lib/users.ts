@@ -111,7 +111,7 @@ interface UserRow {
 
 export async function listUsers(
   db: D1Database,
-  filter: { role?: Role; shopId?: string; roles?: Role[] },
+  filter: { role?: Role; shopId?: string; roles?: Role[]; q?: string; cursor?: string; limit?: number },
 ): Promise<UserDto[]> {
   const where: string[] = ["u.status <> 'DELETED'"];
   const args: unknown[] = [];
@@ -127,15 +127,26 @@ export async function listUsers(
     where.push("u.shop_id = ?");
     args.push(filter.shopId);
   }
+  if (filter.q) {
+    // 表示名・ログインID・店舗名の部分一致(%と_は文字として扱う)
+    const like = `%${filter.q.replace(/[%_\\]/g, (m) => `\\${m}`)}%`;
+    where.push("(u.nickname LIKE ? ESCAPE '\\' OR u.login_id LIKE ? ESCAPE '\\' OR s.display_name LIKE ? ESCAPE '\\')");
+    args.push(like, like, like);
+  }
+  if (filter.cursor) {
+    const [t, id] = filter.cursor.split(":");
+    where.push("(u.created_at < ? OR (u.created_at = ? AND u.id < ?))");
+    args.push(Number(t), Number(t), id);
+  }
   const { results } = await db
     .prepare(
       `SELECT u.id, u.role, u.login_id, u.nickname, u.shop_id, s.display_name AS shop_name, u.status, u.created_at,
               (SELECT q.issued_at FROM reception_login_qrs q WHERE q.user_id = u.id AND q.revoked_at IS NULL) AS qr_issued_at
          FROM users u LEFT JOIN shops s ON s.id = u.shop_id
         WHERE ${where.join(" AND ")}
-        ORDER BY u.created_at DESC LIMIT 500`,
+        ORDER BY u.created_at DESC, u.id DESC LIMIT ?`,
     )
-    .bind(...args)
+    .bind(...args, filter.limit ?? 500)
     .all<UserRow>();
   return results.map((r) => ({
     id: r.id,

@@ -49,8 +49,8 @@ export const cardRoutes = new Hono<AppEnv>()
   .use("*", requireRole("ADMIN"))
 
   // 一覧・検索(ニックネーム・カード番号・発行バッチ)。同名の利用者は番号・残高・日時で見分ける
-  .get("/", zv("query", z.object({ q: z.string().trim().max(60).optional(), status: z.enum(["ISSUED", "ACTIVE", "SUSPENDED", "EXPIRED", "DELETED"]).optional(), expiring: z.coerce.number().int().min(1).max(60).optional() })), async (c) => {
-    const { q, status, expiring } = c.req.valid("query");
+  .get("/", zv("query", z.object({ q: z.string().trim().max(60).optional(), status: z.enum(["ISSUED", "ACTIVE", "SUSPENDED", "EXPIRED", "DELETED"]).optional(), expiring: z.coerce.number().int().min(1).max(60).optional(), limit: z.coerce.number().int().min(1).max(100).default(100), offset: z.coerce.number().int().min(0).max(100000).default(0) })), async (c) => {
+    const { q, status, expiring, limit, offset } = c.req.valid("query");
     const now = Date.now();
     const where: string[] = [];
     const args: (string | number)[] = [];
@@ -71,13 +71,13 @@ export const cardRoutes = new Hono<AppEnv>()
       where.push("c.status = ? AND (c.expires_at IS NULL OR c.expires_at > ?)");
       args.push(status, now);
     } else where.push("c.status <> 'DELETED'");
-    const { results } = await c.env.DB.prepare(`${CARD_SELECT} WHERE ${where.join(" AND ")} ORDER BY ${expiring ? "c.expires_at ASC," : ""} c.issued_at DESC, c.display_no DESC LIMIT 300`)
-      .bind(...args)
+    const { results } = await c.env.DB.prepare(`${CARD_SELECT} WHERE ${where.join(" AND ")} ORDER BY ${expiring ? "c.expires_at ASC," : ""} c.issued_at DESC, c.display_no DESC LIMIT ? OFFSET ?`)
+      .bind(...args, limit + 1, offset)
       .all<CardRow>();
-    const counts = await c.env.DB
-      .prepare("SELECT status, count(*) AS n FROM cards GROUP BY status")
-      .all<{ status: string; n: number }>();
-    return c.json({ cards: results.map((r) => toCardDto(r, now)), counts: Object.fromEntries(counts.results.map((x) => [x.status, x.n])) });
+    const more = results.length > limit;
+    const page = more ? results.slice(0, limit) : results;
+    // 件数の集計(全件の走査)は一覧のたびには行わない。続きがあるときは next(次の offset)を返す
+    return c.json({ cards: page.map((r) => toCardDto(r, now)), next: more ? offset + limit : null });
   })
 
   // 発行(一括)。QRトークンはここで返す1回だけ。サーバーにはハッシュしか残らないので、印刷はこのレスポンスから行う

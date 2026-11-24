@@ -1,8 +1,10 @@
-import { ArrowDownLeft, ArrowUpRight, Banknote, RotateCcw } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ArrowDownLeft, ArrowUpRight, Banknote, RotateCcw, Search } from "lucide-react";
+import { useCallback, useState } from "react";
 import type { HistoryItem } from "@shared/api";
+import { PeriodPicker, type Period } from "@/components/PeriodPicker";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { api } from "@/lib/api";
+import { api, errorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { cn, formatDateTime } from "@/lib/utils";
 
@@ -23,30 +25,76 @@ function KindIcon({ kind }: { kind: HistoryItem["kind"] }) {
   return <ArrowDownLeft className={cls} />;
 }
 
-/** 顧客の利用履歴(チャージ・支払い・返金・払い戻し)。残高が変わったら読み直す */
-export function HistoryCard({ balance }: { balance: number | undefined }) {
+const TABS = [
+  { id: "all", label: "すべて" },
+  { id: "charge", label: "チャージ" },
+  { id: "payment", label: "お支払い" },
+  { id: "refund", label: "返金・払い戻し" },
+] as const;
+type Tab = (typeof TABS)[number]["id"];
+
+/**
+ * 顧客の利用履歴(チャージ・支払い・返金・払い戻し)。
+ * データベースの読み取りを節約するため、開いただけでは読み込まず、種類・期間を選んで「検索」したときだけ読む(1回20件、続きは「さらに表示」)
+ */
+export function HistoryCard(_props: { balance: number | undefined }) {
   const { money } = useAuth();
+  const [tab, setTab] = useState<Tab>("all");
+  const [period, setPeriod] = useState<Period>({});
   const [items, setItems] = useState<HistoryItem[] | null>(null);
-  const load = useCallback(async () => {
-    try {
-      setItems((await api<{ items: HistoryItem[] }>("/wallet/history")).items);
-    } catch {
-      /* 取得できなければ、前回の表示のまま */
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-  }, [load, balance]);
+  const [next, setNext] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const search = useCallback(
+    async (cursor?: string) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const p = new URLSearchParams({ kind: tab, limit: "20" });
+        if (period.from !== undefined) p.set("from", String(period.from));
+        if (period.to !== undefined) p.set("to", String(period.to));
+        if (cursor) p.set("cursor", cursor);
+        const r = await api<{ items: HistoryItem[]; next: string | null }>(`/wallet/history?${p}`);
+        setItems((cur) => (cursor && cur ? [...cur, ...r.items] : r.items));
+        setNext(r.next);
+      } catch (e) {
+        setError(errorMessage(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [tab, period],
+  );
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>利用履歴</CardTitle>
-        <CardDescription>チャージ・お支払い・返金の記録です(新しい順)。</CardDescription>
+        <CardDescription>チャージ・お支払い・返金の記録です(新しい順)。種類と期間を選んで「検索」してください。</CardDescription>
+        <div className="flex flex-wrap gap-1.5 pt-1" role="tablist" aria-label="履歴の種類">
+          {TABS.map((t) => (
+            <button
+              key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
+              onClick={() => setTab(t.id)}
+              className={cn("rounded-full px-3 py-1.5 text-sm font-medium", tab === t.id ? "bg-primary text-primary-foreground" : "bg-accent text-muted-foreground")}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-end gap-2 pt-2">
+          <PeriodPicker onChange={setPeriod} />
+          <Button onClick={() => void search()} disabled={busy}>
+            <Search /> 検索
+          </Button>
+        </div>
       </CardHeader>
       <CardContent className="flex flex-col divide-y divide-border">
-        {items === null && <p className="py-2 text-sm text-muted-foreground">読み込み中…</p>}
-        {items?.length === 0 && <p className="py-2 text-sm text-muted-foreground">まだ履歴がありません</p>}
+        {error && <p className="py-2 text-sm text-destructive">{error}</p>}
+        {items === null && !error && <p className="py-2 text-sm text-muted-foreground">「検索」を押すと、履歴が表示されます</p>}
+        {items?.length === 0 && <p className="py-2 text-sm text-muted-foreground">該当する履歴がありません</p>}
         {items?.map((i) => (
           <div key={i.id} className="flex items-center gap-3 py-3">
             <span className={cn("flex size-9 shrink-0 items-center justify-center rounded-full", i.amount > 0 ? "bg-secondary text-primary" : "bg-accent")}>
@@ -68,6 +116,13 @@ export function HistoryCard({ balance }: { balance: number | undefined }) {
             </div>
           </div>
         ))}
+        {next && (
+          <div className="pt-3">
+            <Button variant="outline" className="w-full" onClick={() => void search(next)} disabled={busy}>
+              {busy ? "読み込み中…" : "さらに表示"}
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
