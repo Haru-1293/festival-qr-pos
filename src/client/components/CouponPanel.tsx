@@ -254,7 +254,8 @@ export function CouponForm({
   const [count, setCount] = useState("10");
   const [totalLimit, setTotalLimit] = useState("");
   const [firstN, setFirstN] = useState("20");
-  const [perWallet, setPerWallet] = useState("1");
+  const [onePerPerson, setOnePerPerson] = useState(true); // 1人1回まで(既定はオン)
+  const [perWallet, setPerWallet] = useState("");
   const [cCombine, setCCombine] = useState(true);
   const [note, setNote] = useState("");
   const [made, setMade] = useState<string[] | null>(null);
@@ -273,7 +274,7 @@ export function CouponForm({
         code: code || undefined,
         count: oneTime && !code ? Number(count || 1) : undefined,
         totalLimit: oneTime ? 1 : kind === "FIRST_COME" ? num(firstN) : num(totalLimit),
-        perWalletLimit: kind === "COMMON" ? num(perWallet) : null,
+        perWalletLimit: kind === "COMMON" ? (onePerPerson ? 1 : num(perWallet)) : null,
         combinableWithAuto: cCombine,
         note: note || null,
       };
@@ -320,13 +321,21 @@ export function CouponForm({
             </Field>
           )}
           {kind === "COMMON" && (
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="全体の利用上限(空欄=なし)">
-                <Input inputMode="numeric" value={totalLimit} onChange={(e) => setTotalLimit(digits(e.target.value))} />
-              </Field>
-              <Field label="1人あたりの上限(空欄=なし)">
-                <Input inputMode="numeric" value={perWallet} onChange={(e) => setPerWallet(digits(e.target.value))} />
-              </Field>
+            <div className="flex flex-col gap-3">
+              <label className="flex items-center gap-2 text-sm font-semibold">
+                <Checkbox className="size-4" checked={onePerPerson} onCheckedChange={(c) => setOnePerPerson(c === true)} />
+                1人1回までにする
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="全体の利用上限(空欄=なし)">
+                  <Input inputMode="numeric" value={totalLimit} onChange={(e) => setTotalLimit(digits(e.target.value))} />
+                </Field>
+                {!onePerPerson && (
+                  <Field label="1人あたりの上限(空欄=なし)">
+                    <Input inputMode="numeric" value={perWallet} onChange={(e) => setPerWallet(digits(e.target.value))} />
+                  </Field>
+                )}
+              </div>
             </div>
           )}
           <Field label="メモ(任意)">
