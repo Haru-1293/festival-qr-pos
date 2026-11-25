@@ -252,10 +252,8 @@ async function createCoupons(db: D1Database, auth: AuthContext, b: CouponBody, s
     if (b.totalLimit === null) throw badRequest("先着の人数を入力してください");
   }
   let codes: string[];
-  if (b.kind === "COMMON") {
-    const code = normalizeCode(b.code ?? "");
-    if (!/^[A-Z0-9-]{3,24}$/.test(code)) throw badRequest("コードは英数字とハイフンの3〜24文字で入力してください");
-    codes = [code];
+  if (b.kind === "COMMON" && !b.code?.trim()) {
+    codes = [randomCode()]; // 共通コードは空欄なら自動で作る
   } else if (b.code?.trim()) {
     const code = normalizeCode(b.code);
     if (!/^[A-Z0-9-]{3,24}$/.test(code)) throw badRequest("コードは英数字とハイフンの3〜24文字で入力してください");

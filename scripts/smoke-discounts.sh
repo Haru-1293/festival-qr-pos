@@ -108,6 +108,8 @@ mkauto x FIXED 0 null null "[]" true; check "0円引きは400" 400
 req $ADMIN POST /api/discounts/auto "{\"name\":\"x\",\"method\":\"FIXED\",\"value\":10,\"minOrderAmount\":null,\"maxDiscountAmount\":null,\"startsAt\":2000,\"endsAt\":1000,\"shopIds\":[],\"combinableWithCoupon\":true}"; check "終了が開始より前は400" 400
 mkauto x FIXED 10 null null '["01HZZZZZZZZZZZZZZZZZZZZZZZ"]' true; check "存在しない店舗は400" 400
 mkcoupon COMMON "a b" FIXED 10 null null "[]" null null true; check "コードの形式が不正は400" 400
+mkcoupon COMMON "" FIXED 10 null null "[]" null null true; check "共通コードは空欄なら自動で作る" 201
+expect "自動のコードは英数字・ハイフンの3〜24文字" 1 "$(python3 -I -c "import json,re;c=json.load(open('$TMP/body'))['codes'];print(1 if len(c)==1 and re.fullmatch(r'[A-Z0-9-]{3,24}',c[0]) else 0)")"
 
 echo "== 全ユーザー割引(10%・500以上・店舗A) =="
 req $ADMIN GET /api/discounts; check "一覧" 200

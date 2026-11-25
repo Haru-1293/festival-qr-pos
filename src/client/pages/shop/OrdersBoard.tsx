@@ -35,16 +35,16 @@ function OrderCard({
   const [val, setVal] = useState("");
   return (
     <Card className={cn("flex flex-col gap-2 p-3", ready && "border-primary bg-secondary/60")}>
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         {editing ? (
           <form
-            className="flex items-center gap-1"
+            className="flex min-w-0 flex-wrap items-center gap-1"
             onSubmit={(e) => {
               e.preventDefault();
               void onRenumber(o.orderId, val).then((ok) => ok && setEditing(false));
             }}
           >
-            <Input autoFocus autoCapitalize="characters" autoComplete="off" aria-label="新しい番号札" value={val} onChange={(e) => setVal(e.target.value.replace(/[^\x21-\x7E]/g, "").toUpperCase().slice(0, CALL_TAG_MAX))} className="h-10 w-28 text-center text-xl font-bold" />
+            <Input autoFocus autoCapitalize="characters" autoComplete="off" aria-label="新しい番号札" value={val} onChange={(e) => setVal(e.target.value.replace(/[^\x21-\x7E]/g, "").toUpperCase().slice(0, CALL_TAG_MAX))} className="h-10 w-24 text-center text-xl font-bold" />
             <Button type="submit" size="sm" disabled={busy || val === ""}>
               変更
             </Button>
@@ -68,7 +68,7 @@ function OrderCard({
             </button>
           </span>
         )}
-        <Badge variant={ready ? "default" : "muted"}>{ago(o.status === "READY" ? o.updatedAt : o.createdAt, now)}</Badge>
+        <Badge className="shrink-0 whitespace-nowrap" variant={ready ? "default" : "muted"}>{ago(o.status === "READY" ? o.updatedAt : o.createdAt, now)}</Badge>
       </div>
       <ul className="flex flex-col gap-0.5 text-sm">
         {o.items.map((it, i) => (

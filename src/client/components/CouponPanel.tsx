@@ -306,8 +306,8 @@ export function CouponForm({
             </Select>
           </Field>
           <RuleFields f={cf} set={(p) => setCf({ ...cf, ...p })} shops={shops} fixedShop={fixedShop} />
-          <Field label={oneTime ? "コード(空欄なら自動で作ります)" : "コード(英数字・ハイフン)"}>
-            <Input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} maxLength={24} required={!oneTime} placeholder="SPRING100" autoCapitalize="characters" />
+          <Field label="コード(英数字・ハイフン。空欄なら自動で作ります)">
+            <Input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ""))} maxLength={24} placeholder="空欄で自動生成(例: SPRING100)" autoCapitalize="characters" />
           </Field>
           {oneTime && !code && (
             <Field label="作る枚数(最大100)">
