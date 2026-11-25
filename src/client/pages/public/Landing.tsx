@@ -115,6 +115,8 @@ export function LandingPage() {
         </section>
 
         <footer className="flex flex-wrap justify-center gap-x-4 gap-y-1 border-t border-border pt-4 text-xs text-muted-foreground">
+          {settings.legal.TERMS !== null && <Link to="/terms" className="underline">利用規約</Link>}
+          {settings.legal.PRIVACY !== null && <Link to="/privacy" className="underline">プライバシーポリシー</Link>}
           <span>スタッフの方:</span>
           <Link to="/clerk/login" className="underline">店員</Link>
           <Link to="/shop/login" className="underline">店舗責任者</Link>

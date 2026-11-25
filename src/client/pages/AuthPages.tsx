@@ -6,6 +6,7 @@ import { ROLE_HOME } from "@/lib/roleHome";
 import type { MeResponse } from "@shared/api";
 import { ErrorText, Field } from "@/components/Shell";
 import { QrScanner, scannerSupported } from "@/components/QrScanner";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -172,6 +173,9 @@ export function RegisterPage() {
   const [email, setEmail] = useState("");
   const [nickname, setNickname] = useState("");
   const [password, setPassword] = useState("");
+  const [agree, setAgree] = useState(false);
+  const { settings } = useAuth();
+  const hasLegal = settings.legal.TERMS !== null || settings.legal.PRIVACY !== null;
   const { pending, error, run } = useAction();
 
   if (me) return <Navigate to={ROLE_HOME[me.user.role]} replace />;
@@ -181,7 +185,7 @@ export function RegisterPage() {
     void run(async () => {
       setMe(
         await api<MeResponse>("/auth/register", {
-          body: { email, password, nickname },
+          body: { email, password, nickname, agree: hasLegal ? agree : undefined },
         }),
       );
     });
@@ -199,8 +203,28 @@ export function RegisterPage() {
         <Field label="パスワード" hint="8文字以上。忘れた場合は全体管理者が再設定します">
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength={8} required />
         </Field>
+        {hasLegal && (
+          <label className="flex items-start gap-2 text-sm">
+            <Checkbox checked={agree} onCheckedChange={(v) => setAgree(v === true)} className="mt-0.5" />
+            <span>
+              {settings.legal.TERMS !== null && (
+                <Link to="/terms" target="_blank" className="font-semibold underline">
+                  利用規約
+                </Link>
+              )}
+              {settings.legal.TERMS !== null && settings.legal.PRIVACY !== null && "と"}
+              {settings.legal.PRIVACY !== null && (
+                <Link to="/privacy" target="_blank" className="font-semibold underline">
+                  プライバシーポリシー
+                </Link>
+              )}
+              に同意します
+            </span>
+          </label>
+        )}
+        {settings.globalExpiry && <p className="text-xs text-muted-foreground">ウォレットの有効期限は {settings.globalExpiry.replaceAll("-", "/")} までです。</p>}
         <ErrorText message={error} />
-        <Button type="submit" size="lg" disabled={pending}>
+        <Button type="submit" size="lg" disabled={pending || (hasLegal && !agree)}>
           {pending ? "登録中…" : "登録してはじめる"}
         </Button>
       </form>

@@ -777,3 +777,29 @@ export interface TimeSeriesPoint {
   orders: number;
   netSales: number;
 }
+
+/** 全体の有効期限(全体管理者が設定)と、全データ削除ができる日 */
+export interface GlobalExpiryInfo {
+  date: string | null;
+  expiresAt: number | null;
+  /** 全データ削除ができる日時(期限が切れた1か月後の終わり) */
+  resetAvailableAt: number | null;
+  expired: boolean;
+  canReset: boolean;
+  now: number;
+}
+
+export type LegalKind = "TERMS" | "PRIVACY";
+export const LEGAL_LABEL: Record<LegalKind, string> = { TERMS: "利用規約", PRIVACY: "プライバシーポリシー" };
+
+export interface LegalDocumentDto {
+  kind: LegalKind;
+  version: number;
+  bodyMd: string;
+  createdAt: number;
+}
+export interface LegalVersionItem {
+  version: number;
+  createdAt: number;
+  chars: number;
+}

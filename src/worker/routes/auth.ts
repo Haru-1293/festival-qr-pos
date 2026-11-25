@@ -4,12 +4,14 @@ import { z } from "zod";
 import type { MeResponse, WalletSummary } from "@shared/api";
 import type { Role } from "@shared/roles";
 import type { AppEnv, AuthContext } from "../env";
-import { auditStmt } from "../lib/audit";
+import { auditStmt, auditStmtIfExists } from "../lib/audit";
 import { hashPassword, sha256Hex, verifyPassword } from "../lib/crypto";
-import { badRequest, conflict, unauthorized } from "../lib/errors";
+import { badRequest, conflict, forbidden, unauthorized } from "../lib/errors";
 import { newId } from "../lib/ids";
 import { DEFAULT_EXPIRY_POLICY, getExpiryPolicy, resolveExpiry } from "../lib/expiry";
 import { buildSessionStmts, clearSessionCookie, deviceLabelFrom, writeSessionCookie } from "../lib/session";
+import { capByGlobal } from "../lib/globalExpiry";
+import { currentLegalVersions } from "../lib/legal";
 import { isUniqueViolation } from "../lib/users";
 import { requireAuth } from "../middleware/auth";
 import { emailSchema, nicknameSchema, passwordSchema } from "../lib/validation";
@@ -88,24 +90,31 @@ export const authRoutes = new Hono<AppEnv>()
   // 顧客の新規登録(メールアドレスはログインIDとして使うだけ。メール送信・認証はしない)
   .post(
     "/register",
-    zValidator("json", z.object({ email: emailSchema, password: passwordSchema, nickname: nicknameSchema })),
+    zValidator("json", z.object({ email: emailSchema, password: passwordSchema, nickname: nicknameSchema, agree: z.boolean().optional() })),
     async (c) => {
-      const { email, password, nickname } = c.req.valid("json");
+      const { email, password, nickname, agree } = c.req.valid("json");
       const db = c.env.DB;
       const userId = newId();
       const now = Date.now();
       const passwordHash = await hashPassword(password);
       // 管理者が設定した有効期限(固定日が過ぎている等で決まらないときは、期限なしにせず既定の180日)
-      const walletExpiresAt = resolveExpiry(await getExpiryPolicy(db), now) ?? resolveExpiry(DEFAULT_EXPIRY_POLICY, now);
+      const baseExpiry = resolveExpiry(await getExpiryPolicy(db), now) ?? resolveExpiry(DEFAULT_EXPIRY_POLICY, now)!;
+      // 全体の有効期限でおさえる(期限が終わったあとは登録できない)
+      const walletExpiresAt = await capByGlobal(db, baseExpiry, now);
+      // 利用規約・プライバシーポリシーが公開されているときは、同意が必要。同意した版を記録する
+      const legal = await currentLegalVersions(db);
+      if ((legal.TERMS !== null || legal.PRIVACY !== null) && agree !== true) {
+        throw badRequest("利用規約とプライバシーポリシーへの同意が必要です", "AGREE_REQUIRED");
+      }
       const session = await buildSessionStmts(db, { id: userId, role: "CUSTOMER" }, deviceLabelFrom(c));
       try {
         await db.batch([
           db
             .prepare(
-              `INSERT INTO users (id, role, login_id, password_hash, nickname, status, created_at, created_by)
-               VALUES (?, 'CUSTOMER', ?, ?, ?, 'ACTIVE', ?, ?)`,
+              `INSERT INTO users (id, role, login_id, password_hash, nickname, status, created_at, created_by, terms_version, privacy_version, legal_accepted_at)
+               VALUES (?, 'CUSTOMER', ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?)`,
             )
-            .bind(userId, email, passwordHash, nickname, now, userId),
+            .bind(userId, email, passwordHash, nickname, now, userId, legal.TERMS, legal.PRIVACY, legal.TERMS !== null || legal.PRIVACY !== null ? now : null),
           db
             .prepare("INSERT INTO wallets (id, owner_user_id, balance, status, expires_at, created_at) VALUES (?, ?, 0, 'ACTIVE', ?, ?)")
             .bind(newId(), userId, walletExpiresAt, now),
@@ -193,6 +202,45 @@ export const authRoutes = new Hono<AppEnv>()
         c.env.DB.prepare("DELETE FROM sessions WHERE user_id = ? AND id_hash <> ?").bind(auth.userId, auth.sessionHash),
         auditStmt(c.env.DB, { actor: auth, action: "account.change_password", targetType: "user", targetId: auth.userId }),
       ]);
+      return c.json({ ok: true });
+    },
+
+  )
+  // 利用者(顧客)が自分で退会する。残高が0のときだけ。履歴・監査のための情報は消さず、ログインとウォレットの利用だけ止める
+  .post(
+    "/delete-account",
+    zValidator("json", z.object({ password: z.string().min(1).max(200) })),
+    async (c) => {
+      const auth = requireAuth(c);
+      if (auth.role !== "CUSTOMER") throw forbidden("退会できるのはお客様のアカウントだけです");
+      const db = c.env.DB;
+      const { password } = c.req.valid("json");
+      const row = await db.prepare("SELECT password_hash FROM users WHERE id = ? AND status = 'ACTIVE'").bind(auth.userId).first<{ password_hash: string | null }>();
+      if (!row?.password_hash || !(await verifyPassword(password, row.password_hash))) throw unauthorized("パスワードが違います", "INVALID_CREDENTIALS");
+      const w = await db.prepare("SELECT id, balance FROM wallets WHERE owner_user_id = ?").bind(auth.userId).first<{ id: string; balance: number }>();
+      if (w && w.balance !== 0) {
+        throw conflict("残高が残っているため退会できません。受付で払戻しを受けて、残高を0にしてからお手続きください", "BALANCE_NOT_ZERO");
+      }
+      const now = Date.now();
+      // 残高0の確認は更新と同じ文の中で行う(確認のあとに入金されても退会が通らないように)
+      const res = await db
+        .prepare(
+          `UPDATE users SET status = 'DELETED', deleted_at = ?
+            WHERE id = ? AND role = 'CUSTOMER' AND status = 'ACTIVE'
+              AND NOT EXISTS (SELECT 1 FROM wallets w WHERE w.owner_user_id = users.id AND w.balance <> 0)`,
+        )
+        .bind(now, auth.userId)
+        .run();
+      if (res.meta.changes !== 1) throw conflict("残高が残っているため退会できません", "BALANCE_NOT_ZERO");
+      const doneSelect = "SELECT 1 FROM users WHERE id = ? AND status = 'DELETED' AND deleted_at = ?";
+      const done = `EXISTS (${doneSelect})`;
+      await db.batch([
+        db.prepare(`UPDATE wallets SET status = 'CLOSED' WHERE owner_user_id = ? AND ${done}`).bind(auth.userId, auth.userId, now),
+        db.prepare(`UPDATE pay_qr_tokens SET invalidated_at = ? WHERE wallet_id IN (SELECT id FROM wallets WHERE owner_user_id = ?) AND consumed_at IS NULL AND invalidated_at IS NULL`).bind(now, auth.userId),
+        db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(auth.userId),
+        auditStmtIfExists(db, { actor: auth, action: "account.self_delete", targetType: "user", targetId: auth.userId }, doneSelect, [auth.userId, now]),
+      ]);
+      clearSessionCookie(c);
       return c.json({ ok: true });
     },
   );

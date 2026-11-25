@@ -13,6 +13,7 @@ import {
   Layers,
   Package,
   Percent,
+  FileText,
   ScrollText,
   Settings,
   Store,
@@ -35,6 +36,8 @@ import { LandingPage } from "@/pages/public/Landing";
 
 const AdminCash = lazy(() => import("@/pages/admin/AdminCash").then((m) => ({ default: m.AdminCash })));
 const AdminRefunds = lazy(() => import("@/pages/admin/AdminRefunds").then((m) => ({ default: m.AdminRefunds })));
+const AdminLegal = lazy(() => import("@/pages/admin/AdminLegal").then((m) => ({ default: m.AdminLegal })));
+const LegalPage = lazy(() => import("@/pages/public/LegalPage").then((m) => ({ default: m.LegalPage })));
 const AdminSales = lazy(() => import("@/pages/admin/AdminSales").then((m) => ({ default: m.AdminSales })));
 const AdminSettings = lazy(() => import("@/pages/admin/AdminSettings").then((m) => ({ default: m.AdminSettings })));
 const AdminShopDetail = lazy(() => import("@/pages/admin/AdminShopDetail").then((m) => ({ default: m.AdminShopDetail })));
@@ -87,6 +90,7 @@ const ADMIN_NAV: NavItem[] = [
   { to: "/admin/discounts", label: "割引", icon: Percent },
   { to: "/admin/cash", label: "現金", icon: Banknote },
   { to: "/admin/audit", label: "監査ログ", icon: ScrollText },
+  { to: "/admin/legal", label: "規約", icon: FileText },
   { to: "/admin/settings", label: "設定", icon: Settings },
 ];
 const SHOP_NAV: NavItem[] = [
@@ -147,6 +151,8 @@ export default function App() {
               <Route path="/" element={<LandingPage />} />
               <Route path="/login" element={<PortalLoginPage portal="customer" />} />
               <Route path="/register" element={<RegisterPage />} />
+              <Route path="/terms" element={<LegalPage kind="TERMS" />} />
+              <Route path="/privacy" element={<LegalPage kind="PRIVACY" />} />
               <Route path="/setup" element={<SetupPage />} />
               <Route path="/board/:shopId" element={<CallBoardPage />} />
               <Route
@@ -234,6 +240,14 @@ export default function App() {
                   element={
                     <Page width="lg">
                       <AuditLog />
+                    </Page>
+                  }
+                />
+                <Route
+                  path="legal"
+                  element={
+                    <Page>
+                      <AdminLegal />
                     </Page>
                   }
                 />

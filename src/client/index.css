@@ -47,7 +47,7 @@
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 6px);
-  --font-sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", system-ui, sans-serif;
+  --font-sans: "Noto Sans JP", "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic UI", system-ui, sans-serif;
 }
 
 html,
@@ -94,3 +94,25 @@ input {
   --rdp-day-width: 40px;
   margin: 0;
 }
+
+/* Toast UI Editor の画面・本文も Noto Sans JP にそろえる(エディタ側のCSSより強く指定。コードだけは等幅のまま) */
+body .toastui-editor-defaultUI,
+body .toastui-editor-defaultUI *:not(code):not(pre):not(code *) {
+  font-family: var(--font-sans);
+}
+.legal-doc {
+  line-height: 1.85;
+  font-size: 0.95rem;
+}
+.legal-doc h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 1rem; }
+.legal-doc h2 { font-size: 1.2rem; font-weight: 700; margin: 1.8rem 0 0.6rem; padding-bottom: 0.3rem; border-bottom: 1px solid var(--border); }
+.legal-doc h3 { font-size: 1.05rem; font-weight: 700; margin: 1.3rem 0 0.4rem; }
+.legal-doc p { margin: 0.6rem 0; }
+.legal-doc ul { list-style: disc; padding-left: 1.4rem; margin: 0.6rem 0; }
+.legal-doc ol { list-style: decimal; padding-left: 1.4rem; margin: 0.6rem 0; }
+.legal-doc a { color: var(--primary); text-decoration: underline; }
+.legal-doc blockquote { border-left: 4px solid var(--border); padding-left: 0.9rem; color: var(--muted-foreground); margin: 0.8rem 0; }
+.legal-doc table { border-collapse: collapse; margin: 0.8rem 0; width: 100%; display: block; overflow-x: auto; }
+.legal-doc th, .legal-doc td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; }
+.legal-doc code { background: var(--muted); padding: 0.1rem 0.3rem; border-radius: 0.25rem; }
+.legal-doc hr { border: 0; border-top: 1px solid var(--border); margin: 1.4rem 0; }

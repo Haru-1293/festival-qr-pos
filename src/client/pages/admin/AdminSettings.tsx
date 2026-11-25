@@ -11,6 +11,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 import { useConfirm } from "@/lib/confirm";
+import { GlobalExpiryCards } from "./GlobalExpiryCards";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 /** 緊急停止: お金が動く入口(レジの読み取り・確定、受付のチャージ・払戻し、顧客のQR発行)を止める */
@@ -136,6 +137,7 @@ export function AdminSettings() {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       <EmergencyCard />
+      <GlobalExpiryCards />
       <Card>
         <CardHeader>
           <CardTitle>通貨の表示</CardTitle>

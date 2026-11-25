@@ -1,3 +1,4 @@
+import { AccountDeleteCard } from "@/components/AccountDeleteCard";
 import { ActiveOrdersCard } from "@/components/ActiveOrdersCard";
 import { HistoryCard } from "@/components/HistoryCard";
 import { PasswordChangeCard } from "@/components/PasswordChangeCard";
@@ -5,6 +6,7 @@ import { PayQrCard } from "@/components/PayQrCard";
 import { Page } from "@/components/layout/ConsoleLayout";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Link } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import { formatDateTime } from "@/lib/utils";
 
@@ -62,9 +64,19 @@ export function CustomerHistory() {
 
 /** アカウント(パスワード変更) */
 export function CustomerAccount() {
+  const { settings } = useAuth();
   return (
     <Page>
-      <PasswordChangeCard />
+      <div className="flex flex-col gap-4">
+        <PasswordChangeCard />
+        <AccountDeleteCard />
+        {(settings.legal.TERMS !== null || settings.legal.PRIVACY !== null) && (
+          <p className="flex justify-center gap-4 text-xs text-muted-foreground">
+            {settings.legal.TERMS !== null && <Link to="/terms" className="underline">利用規約</Link>}
+            {settings.legal.PRIVACY !== null && <Link to="/privacy" className="underline">プライバシーポリシー</Link>}
+          </p>
+        )}
+      </div>
     </Page>
   );
 }

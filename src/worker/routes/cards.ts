@@ -4,6 +4,7 @@ import type { CardDto, IssuedCard } from "@shared/api";
 import type { AppEnv } from "../env";
 import { auditStmt } from "../lib/audit";
 import { getExpiryPolicy, maxExpiry, resolveExpiry } from "../lib/expiry";
+import { capByGlobal } from "../lib/globalExpiry";
 import { CARD_SELECT, type CardRow, cardUsableSql, newCardToken, toCardDto } from "../lib/cards";
 import { hashPin, sha256Hex } from "../lib/crypto";
 import { badRequest, conflict, notFound } from "../lib/errors";
@@ -33,7 +34,7 @@ async function checkExpiry(db: D1Database, expiresAt: number | undefined, now: n
   }
   if (e <= now) throw badRequest("有効期限は未来の日時にしてください");
   if (e > maxExpiry(now)) throw badRequest("有効期限は6か月(184日)以内にしてください(前払式支払手段の特例)");
-  return e;
+  return capByGlobal(db, e, now);
 }
 
 const isUnique = (e: unknown) => e instanceof Error && e.message.includes("UNIQUE constraint failed");

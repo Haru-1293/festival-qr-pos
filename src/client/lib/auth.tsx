@@ -8,6 +8,10 @@ interface PublicSettings {
   festivalName: string;
   /** 緊急停止中か(お金が動く操作が止まる) */
   emergency: EmergencyState;
+  /** 全体の有効期限(YYYY-MM-DD)。未設定は null */
+  globalExpiry: string | null;
+  /** 公開中の利用規約・プライバシーポリシーの版(未公開は null) */
+  legal: { TERMS: number | null; PRIVACY: number | null };
 }
 
 interface AuthState {
@@ -22,7 +26,7 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-const FALLBACK: PublicSettings = { currency: DEFAULT_CURRENCY, festivalName: "学園祭", emergency: { on: false, message: "" } };
+const FALLBACK: PublicSettings = { currency: DEFAULT_CURRENCY, festivalName: "学園祭", emergency: { on: false, message: "" }, globalExpiry: null, legal: { TERMS: null, PRIVACY: null } };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<MeResponse | null>(null);
