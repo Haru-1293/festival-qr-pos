@@ -515,6 +515,18 @@ export interface ItemTargetDto extends ItemTarget {
   name: string;
 }
 
+/** 割引の発動条件: この商品(タグ・セット)を minQty 個以上買ったとき */
+export interface DiscountCondition extends ItemTarget {
+  minQty: number;
+}
+export interface DiscountConditionDto extends DiscountCondition {
+  name: string;
+}
+/** 割引をかける範囲。DEFAULT=対象を指定していればその商品、なければ全体 / ORDER=会計全体 / CONDITION=条件にあたった商品だけ */
+export type ApplyScope = "DEFAULT" | "ORDER" | "CONDITION";
+/** 条件が複数あるとき、すべて満たす(ALL)か、どれか1つ(ANY)か */
+export type ConditionMode = "ALL" | "ANY";
+
 export interface DiscountRuleInput {
   name: string;
   method: DiscountMethod;
@@ -527,6 +539,10 @@ export interface DiscountRuleInput {
   shopIds: string[];
   /** 商品・タグ・セットで対象を絞る(空なら絞らない) */
   items?: ItemTarget[];
+  /** 発動条件(商品の個数)。会計金額の条件は minOrderAmount。空なら、金額の条件だけ */
+  conditions?: DiscountCondition[];
+  conditionMode?: ConditionMode;
+  applyScope?: ApplyScope;
 }
 
 export interface AutoDiscountInput extends DiscountRuleInput {
@@ -562,6 +578,9 @@ export interface AutoDiscountDto {
   status: DiscountStatus;
   shopIds: string[];
   items: ItemTargetDto[];
+  conditions: DiscountConditionDto[];
+  conditionMode: ConditionMode;
+  applyScope: ApplyScope;
   /** 今の時刻で適用される状態か */
   state: "RUNNING" | "SCHEDULED" | "ENDED" | "STOPPED";
   usedCount: number;
@@ -589,6 +608,9 @@ export interface CouponDto {
   state: "RUNNING" | "SCHEDULED" | "ENDED" | "STOPPED" | "USED_UP";
   shopIds: string[];
   items: ItemTargetDto[];
+  conditions: DiscountConditionDto[];
+  conditionMode: ConditionMode;
+  applyScope: ApplyScope;
   note: string | null;
   createdAt: number;
 }

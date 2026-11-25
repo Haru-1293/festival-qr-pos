@@ -7,6 +7,8 @@ export interface DiscountLineInput {
   /** 単品なら商品ID、セットならセットID(商品・タグ・セットを指定した割引の判定に使う) */
   kind: "PRODUCT" | "SET";
   productId: string;
+  /** 買った個数(商品の個数の条件の判定に使う) */
+  quantity: number;
 }
 
 /** 割引が対象を絞っているときの、商品・タグ・セットの指定(空なら絞らない=割引対象の全商品) */
@@ -24,6 +26,15 @@ interface RuleRow {
   min_order_amount: number | null;
   max_discount_amount: number | null;
   combinable_with_coupon: number;
+  apply_scope: "DEFAULT" | "ORDER" | "CONDITION";
+  condition_mode: "ALL" | "ANY";
+}
+
+interface Cond {
+  type: "PRODUCT" | "TAG" | "SET";
+  id: string;
+  minQty: number;
+  name: string;
 }
 
 interface CouponRow extends RuleRow {
@@ -84,7 +95,7 @@ export function allocate(amount: number, remaining: number[]): number[] {
   return out;
 }
 
-const RULE_COLS = `d.id, d.name, d.method, d.value, d.min_order_amount, d.max_discount_amount, d.combinable_with_coupon`;
+const RULE_COLS = `d.id, d.name, d.method, d.value, d.min_order_amount, d.max_discount_amount, d.combinable_with_coupon, d.apply_scope, d.condition_mode`;
 const inTarget = (shopId: string) =>
   `(NOT EXISTS (SELECT 1 FROM discount_targets t WHERE t.discount_id = d.id AND t.target_type = 'SHOP')
      OR EXISTS (SELECT 1 FROM discount_targets t WHERE t.discount_id = d.id AND t.target_type = 'SHOP' AND t.target_id = '${shopId.replace(/[^A-Za-z0-9_-]/g, "")}'))`;
@@ -141,6 +152,28 @@ export async function computeDiscounts(
       }
     }
   };
+  // 割引ごとの発動条件(商品・タグ・セットをN個以上)
+  const condsOf = new Map<string, Cond[]>();
+  const loadConds = async (discountIds: string[]) => {
+    for (let i = 0; i < discountIds.length; i += 80) {
+      const part = discountIds.slice(i, i + 80);
+      const { results } = await db
+        .prepare(
+          `SELECT c.discount_id, c.target_type AS type, c.target_id AS id, c.min_qty AS minQty, COALESCE(p.name, g.name, s.name, '商品') AS name
+             FROM discount_conditions c
+             LEFT JOIN products p ON c.target_type = 'PRODUCT' AND p.id = c.target_id
+             LEFT JOIN tags g ON c.target_type = 'TAG' AND g.id = c.target_id
+             LEFT JOIN sets s ON c.target_type = 'SET' AND s.id = c.target_id
+            WHERE c.discount_id IN (${part.map(() => "?").join(",")})`,
+        )
+        .bind(...part)
+        .all<Cond & { discount_id: string }>();
+      for (const r of results) condsOf.set(r.discount_id, [...(condsOf.get(r.discount_id) ?? []), { type: r.type, id: r.id, minQty: r.minQty, name: r.name }]);
+    }
+  };
+  const lineHas = (c: { type: Cond["type"]; id: string }, l: DiscountLineInput): boolean =>
+    c.type === "SET" ? l.kind === "SET" && l.productId === c.id : l.kind === "PRODUCT" && (c.type === "PRODUCT" ? l.productId === c.id : !!lineTags.get(l.productId)?.has(c.id));
+  const qtyFor = (c: Cond): number => lines.reduce((s, l) => s + (lineHas(c, l) ? l.quantity : 0), 0);
   const matches = (t: ItemTargets | undefined, l: DiscountLineInput): boolean => {
     if (!t) return true;
     if (l.kind === "SET") return t.sets.has(l.productId);
@@ -154,12 +187,22 @@ export async function computeDiscounts(
     r: RuleRow,
     extra: { couponId?: string; code?: string; totalLimit?: number | null; perWalletLimit?: number | null },
   ): { ok: true } | { ok: false; reason: string } => {
-    if (r.min_order_amount !== null && subtotal < r.min_order_amount) {
-      return { ok: false, reason: `${r.min_order_amount} 以上のお買い上げで使えます` };
+    // 発動条件: 会計金額(min_order_amount)と、商品の個数。複数あるときは「すべて」か「どれか」
+    const conds = condsOf.get(r.id) ?? [];
+    const amountOk = r.min_order_amount === null ? null : subtotal >= r.min_order_amount;
+    const condOk = conds.map((c) => qtyFor(c) >= c.minQty);
+    const all = [...(amountOk === null ? [] : [amountOk]), ...condOk];
+    const met = all.length === 0 || (r.condition_mode === "ANY" ? all.some(Boolean) : all.every(Boolean));
+    if (!met) {
+      const parts = [...(r.min_order_amount === null ? [] : [`${r.min_order_amount}円以上のお買い上げ`]), ...conds.map((c) => `${c.type === "TAG" ? `タグ「${c.name}」の商品` : c.name}を${c.minQty}個以上`)];
+      return { ok: false, reason: parts.length === 1 ? `${parts[0]}で使えます` : r.condition_mode === "ANY" ? `${parts.join("、または")}で使えます` : `${parts.join("、かつ")}で使えます` };
     }
     const t = targetsOf.get(r.id);
-    // 対象を絞った割引は、その商品の残り対象額だけが対象。絞っていなければ全行
-    const pool = remaining.map((n, i) => (matches(t, lines[i]) ? n : 0));
+    // 割引をかける範囲: 会計全体 / 条件にあたった商品だけ / 従来どおり(対象を絞っていればその商品、なければ全行)
+    const hit = conds.filter((_c, i) => condOk[i]);
+    const pool = remaining.map((n, i) =>
+      r.apply_scope === "ORDER" ? n : r.apply_scope === "CONDITION" ? (hit.some((c) => lineHas(c, lines[i])) ? n : 0) : matches(t, lines[i]) ? n : 0,
+    );
     const eligible = pool.reduce((s, n) => s + n, 0);
     const rule = { method: r.method, value: r.value, max: r.max_discount_amount, min: r.min_order_amount };
     const amount = discountAmount(rule, eligible);
@@ -196,6 +239,7 @@ export async function computeDiscounts(
     .bind(now, now)
     .all<RuleRow>();
   await loadTargets(autos.results.map((r) => r.id));
+  await loadConds(autos.results.map((r) => r.id));
   let autoBlocksCoupon = false;
   for (const r of autos.results) {
     if (apply("AUTO", r, {}).ok && r.combinable_with_coupon === 0) autoBlocksCoupon = true;
@@ -237,6 +281,7 @@ export async function computeDiscounts(
         }
         if (!couponError) {
           await loadTargets([c.id]);
+          await loadConds([c.id]);
           const r = apply(c.kind === "COMMON" ? "COMMON_COUPON" : "ONE_TIME_COUPON", c, {
             couponId: c.coupon_id,
             code: c.code,

@@ -201,7 +201,7 @@ quote "$IT1" SOLO; expect "全ユーザー割引が当たらなければ使え�
 mkcoupon COMMON ONLYB FIXED 50 null null "[\"$SB\"]" null null true; check "店舗B限定クーポン" 201
 quote "$IT2" ONLYB; expect "他店舗限定のクーポンは使えない" "このクーポンはこのお店では使えません" "$(jget "['couponError']")"
 mkcoupon COMMON MIN1000 FIXED 50 1000 null "[]" null null true; check "最低金額つき" 201
-quote "$IT2" MIN1000; expect "最低金額に満たない" "1000 以上のお買い上げで使えます" "$(jget "['couponError']")"
+quote "$IT2" MIN1000; expect "最低金額に満たない" "1000円以上のお買い上げで使えます" "$(jget "['couponError']")"
 mkcoupon COMMON ALL100 PERCENT 100 null null "[]" null null true; check "100%クーポン" 201
 quote "$(items $NODISC 1)" ALL100; expect "対象外商品だけなら割引にならない" "割引の対象になる商品がありません" "$(jget "['couponError']")"
 mkcoupon COMMON PAST FIXED 50 null null "[]" null null true >/dev/null

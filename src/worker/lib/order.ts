@@ -301,7 +301,7 @@ export async function quoteCart(
       ? await computeDiscounts(
           db,
           shopId,
-          raw.map((l) => ({ base: l.discountable ? l.unitPrice * l.quantity : 0, kind: l.kind, productId: l.productId })),
+          raw.map((l) => ({ base: l.discountable ? l.unitPrice * l.quantity : 0, kind: l.kind, productId: l.productId, quantity: l.quantity })),
           subtotal,
           now,
           couponCode,

@@ -1,7 +1,8 @@
 import { Percent } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { AutoDiscountDto, AutoDiscountInput, CouponDto, CouponInput, DiscountMethod, ShopDto } from "@shared/api";
-import { CouponForm, CouponList, RuleFields, STATE_LABEL, emptyRule, ruleBody, type RuleForm } from "@/components/CouponPanel";
+import { AdvancedRuleSettings, describeAdvanced } from "@/components/DiscountAdvanced";
+import { CouponForm, CouponList, RuleFields, advancedShopId, STATE_LABEL, emptyRule, ruleBody, type RuleForm } from "@/components/CouponPanel";
 import { ErrorText } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,6 +76,7 @@ export function DiscountManager() {
                 <Checkbox className="size-4" checked={aCombine} onCheckedChange={(c) => setACombine(c === true)} />
                 クーポンと併用できる
               </label>
+              <AdvancedRuleSettings value={af.adv} onChange={(adv) => setAf({ ...af, adv })} shopId={advancedShopId(af)} hasMinAmount={af.min !== ""} />
               <ErrorText message={createAuto.error} />
               <Button type="submit" disabled={createAuto.pending || !af.value}>
                 {createAuto.pending ? "作成中…" : "割引を開始する"}
@@ -101,6 +103,11 @@ export function DiscountManager() {
                 </p>
                 <Badge variant={a.state === "RUNNING" ? "destructive" : "muted"}>{STATE_LABEL[a.state]}</Badge>
               </div>
+              {describeAdvanced(a).map((t) => (
+                <p key={t} className="text-xs font-semibold text-primary">
+                  {t}
+                </p>
+              ))}
               {a.items.length > 0 && <p className="text-xs font-semibold text-primary">対象: {a.items.map((i) => (i.type === "TAG" ? `タグ「${i.name}」` : i.type === "SET" ? `セット「${i.name}」` : i.name)).join("、")}</p>}
               <p className="text-xs text-muted-foreground">
                 {shopNames(a.shopIds)} ・ {period(a)} ・ {a.combinableWithCoupon ? "クーポン併用可" : "クーポン併用不可"} ・ 利用 {a.usedCount}回 / 計 {money(a.usedAmount)}
