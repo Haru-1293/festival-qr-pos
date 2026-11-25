@@ -3,6 +3,9 @@ import {
   BarChart3,
   Banknote,
   Boxes,
+  History,
+  Home,
+  UserCog,
   Calculator,
   ChefHat,
   CreditCard,
@@ -41,6 +44,8 @@ const AuditLog = lazy(() => import("@/pages/admin/AuditLog").then((m) => ({ defa
 const CardManager = lazy(() => import("@/pages/admin/CardManager").then((m) => ({ default: m.CardManager })));
 const DiscountManager = lazy(() => import("@/pages/admin/DiscountManager").then((m) => ({ default: m.DiscountManager })));
 const CallBoardPage = lazy(() => import("@/pages/display/CallBoard").then((m) => ({ default: m.CallBoardPage })));
+const CustomerHistory = lazy(() => import("@/pages/my/CustomerHome").then((m) => ({ default: m.CustomerHistory })));
+const CustomerAccount = lazy(() => import("@/pages/my/CustomerHome").then((m) => ({ default: m.CustomerAccount })));
 const CustomerHome = lazy(() => import("@/pages/my/CustomerHome").then((m) => ({ default: m.CustomerHome })));
 const PosCatalog = lazy(() => import("@/pages/pos/PosCatalog").then((m) => ({ default: m.PosCatalog })));
 const CashPanel = lazy(() => import("@/pages/reception/CashPanel").then((m) => ({ default: m.CashPanel })));
@@ -68,6 +73,11 @@ function OfflineBanner() {
   );
 }
 
+const CUSTOMER_NAV: NavItem[] = [
+  { to: "/my", label: "ホーム", icon: Home, end: true },
+  { to: "/my/history", label: "利用履歴", icon: History },
+  { to: "/my/account", label: "アカウント", icon: UserCog },
+];
 const ADMIN_NAV: NavItem[] = [
   { to: "/admin", label: "売上", icon: BarChart3, end: true },
   { to: "/admin/shops", label: "店舗", icon: Store },
@@ -143,10 +153,14 @@ export default function App() {
                 path="/my"
                 element={
                   <RoleGate roles={["CUSTOMER"]} loginPath="/login">
-                    <CustomerHome />
+                    <ConsoleLayout nav={CUSTOMER_NAV} brand="マイページ" />
                   </RoleGate>
                 }
-              />
+              >
+                <Route index element={<CustomerHome />} />
+                <Route path="history" element={<CustomerHistory />} />
+                <Route path="account" element={<CustomerAccount />} />
+              </Route>
 
               {/* 全体管理者 */}
               <Route path="/admin/login" element={<PortalLoginPage portal="admin" />} />

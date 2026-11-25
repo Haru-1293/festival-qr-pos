@@ -2,7 +2,7 @@ import { ActiveOrdersCard } from "@/components/ActiveOrdersCard";
 import { HistoryCard } from "@/components/HistoryCard";
 import { PasswordChangeCard } from "@/components/PasswordChangeCard";
 import { PayQrCard } from "@/components/PayQrCard";
-import { Shell } from "@/components/Shell";
+import { Page } from "@/components/layout/ConsoleLayout";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth";
@@ -17,7 +17,7 @@ export function CustomerHome() {
   const expired = !!w?.expiresAt && w.expiresAt <= now;
   const daysLeft = w?.expiresAt && !expired ? Math.ceil((w.expiresAt - now) / 86400000) : null;
   return (
-    <Shell title="ホーム">
+    <Page>
       <div className="flex flex-col gap-4">
         <Card className="overflow-hidden">
           <div className="bg-secondary px-4 py-5">
@@ -45,9 +45,26 @@ export function CustomerHome() {
         </Card>
         <ActiveOrdersCard />
         <PayQrCard disabled={w?.status !== "ACTIVE" || expired} />
-        <HistoryCard balance={w?.balance} />
-        <PasswordChangeCard />
       </div>
-    </Shell>
+    </Page>
+  );
+}
+
+/** 利用履歴(左のメニューから開く)。検索したときだけ読み込む */
+export function CustomerHistory() {
+  const { me } = useAuth();
+  return (
+    <Page>
+      <HistoryCard balance={me?.wallet?.balance} />
+    </Page>
+  );
+}
+
+/** アカウント(パスワード変更) */
+export function CustomerAccount() {
+  return (
+    <Page>
+      <PasswordChangeCard />
+    </Page>
   );
 }
