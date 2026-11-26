@@ -37,6 +37,9 @@ export function AdminUsers() {
   const [qr, setQr] = useState<{
     issued: ReceptionQrIssued;
     nickname: string;
+    loginId: string | null;
+    role: Role;
+    shopName?: string | null;
   } | null>(null);
 
   // 一覧はデータベースの読み取りを節約するため、開いただけでは読み込まない。「検索」を押したときだけ、1回100件まで読む
@@ -103,7 +106,7 @@ export function AdminUsers() {
       const issued = await api<ReceptionQrIssued>("/admin/users/reception", {
         body: { nickname: rNick, ...(rLogin ? { loginId: rLogin, password: rPass } : {}) },
       });
-      setQr({ issued, nickname: rNick });
+      setQr({ issued, nickname: rNick, loginId: rLogin.trim() || null, role: "RECEPTION" });
       setRNick("");
       setRLogin("");
       setRPass("");
@@ -160,7 +163,7 @@ export function AdminUsers() {
       return;
     void row.run(async () => {
       const issued = await api<ReceptionQrIssued>(`/admin/users/${u.id}/reception-qr`, { body: { reason: "再発行" } });
-      setQr({ issued, nickname: u.nickname });
+      setQr({ issued, nickname: u.nickname, loginId: u.loginId, role: u.role, shopName: u.shopName });
       await load();
     });
   };
@@ -177,7 +180,7 @@ export function AdminUsers() {
 
   return (
     <div className="flex flex-col gap-4">
-      {qr && <LoginQrDialog issued={qr.issued} nickname={qr.nickname} onClose={() => setQr(null)} />}
+      {qr && <LoginQrDialog issued={qr.issued} nickname={qr.nickname} loginId={qr.loginId} role={qr.role} shopName={qr.shopName} onClose={() => setQr(null)} />}
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>

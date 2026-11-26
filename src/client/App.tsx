@@ -409,6 +409,7 @@ export default function App() {
                   </RoleGate>
                 }
               >
+                <Route index element={<ReceptionPages />} />
                 <Route path="*" element={<ReceptionPages />} />
               </Route>
 

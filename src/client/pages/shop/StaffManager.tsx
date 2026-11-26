@@ -1,3 +1,4 @@
+import type { Role } from "@shared/roles";
 import { KeyRound, Pencil, QrCode, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import type { ReceptionQrIssued, UserDto } from "@shared/api";
@@ -29,6 +30,9 @@ export function StaffManager({ shopId }: { shopId: string }) {
   const [qr, setQr] = useState<{
     issued: ReceptionQrIssued;
     nickname: string;
+    loginId: string | null;
+    role: Role;
+    shopName?: string | null;
   } | null>(null);
   const create = useAction();
   const row = useAction();
@@ -95,7 +99,7 @@ export function StaffManager({ shopId }: { shopId: string }) {
       const issued = await api<ReceptionQrIssued>(`/shops/${shopId}/staff/${u.id}/qr`, {
         body: { reason: u.loginQrIssuedAt ? "再発行" : "新規発行" },
       });
-      setQr({ issued, nickname: u.nickname });
+      setQr({ issued, nickname: u.nickname, loginId: u.loginId, role: u.role, shopName: u.shopName });
       await load();
     });
   };
@@ -131,7 +135,7 @@ export function StaffManager({ shopId }: { shopId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      {qr && <LoginQrDialog issued={qr.issued} nickname={qr.nickname} onClose={() => setQr(null)} />}
+      {qr && <LoginQrDialog issued={qr.issued} nickname={qr.nickname} loginId={qr.loginId} role={qr.role} shopName={qr.shopName} onClose={() => setQr(null)} />}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">

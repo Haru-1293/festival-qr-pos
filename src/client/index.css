@@ -77,11 +77,27 @@ input {
   body.print-sheet-open > #root {
     display: none !important;
   }
+  body.print-sheet-open,
+  html:has(body.print-sheet-open) {
+    background: #fff !important;
+  }
   body.print-sheet-open .sheet-host {
     position: static !important;
     overflow: visible !important;
     background: #fff !important;
   }
+  /* ログインカードは、名刺より少し大きい約9cm幅で用紙の上部に出す(切り取って渡せる) */
+  body.print-sheet-open .login-card {
+    width: 9cm;
+    margin: 0 auto;
+    border-radius: 0.4cm;
+    break-inside: avoid;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
+@page {
+  margin: 12mm;
 }
 
 /* カレンダー(react-day-picker)をアプリの配色に合わせる */
