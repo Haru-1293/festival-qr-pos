@@ -7,6 +7,7 @@ import type { MeResponse } from "@shared/api";
 import { ErrorText, Field } from "@/components/Shell";
 import { QrScanner, scannerSupported } from "@/components/QrScanner";
 import { Checkbox } from "@/components/ui/checkbox";
+import { expectQr } from "@/lib/qrKind";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -129,7 +130,7 @@ export function PortalLoginPage({ portal }: { portal: Portal }) {
       {cfg.qr && (
         <div className="flex flex-col gap-3 border-t border-border pt-4">
           <p className="text-sm font-semibold">QRでログイン</p>
-          {scanning && <QrScanner onScan={onScan} onClose={() => setScanning(false)} />}
+          {scanning && <QrScanner onScan={onScan} accept={expectQr(["RECEPTION", "CARD_OR_CLERK"], "スタッフのログインQR")} onClose={() => setScanning(false)} />}
           <Button variant="outline" size="lg" onClick={() => setScanning(true)} disabled={pending || !scannerSupported()}>
             <ScanLine /> QRを読み取る
           </Button>

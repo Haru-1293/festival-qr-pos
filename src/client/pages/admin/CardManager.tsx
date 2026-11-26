@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { expectQr } from "@/lib/qrKind";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
@@ -259,7 +260,7 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
           {scanning ? (
-            <QrScanner onScan={scan} onClose={() => setScanning(false)} />
+            <QrScanner onScan={scan} accept={expectQr(["CARD_OR_CLERK"], "カードのQR")} onClose={() => setScanning(false)} />
           ) : (
             <Button size="lg" onClick={() => setScanning(true)} disabled={look.pending || !scannerSupported()}>
               <ScanLine /> カメラでカードを読み取る

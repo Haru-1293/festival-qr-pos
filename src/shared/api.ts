@@ -803,3 +803,15 @@ export interface LegalVersionItem {
   createdAt: number;
   chars: number;
 }
+
+/** 残高照会の結果(店員・店舗責任者・全体管理者が、カードのQRから残高を確認する) */
+export interface BalanceInquiry {
+  displayNo: string;
+  nickname: string | null;
+  status: CardStatus;
+  /** カードの状態に関わらず、ウォレットの残高(未有効のカードは0) */
+  balance: number;
+  expiresAt: number | null;
+  expired: boolean;
+  lastUsedAt: number | null;
+}

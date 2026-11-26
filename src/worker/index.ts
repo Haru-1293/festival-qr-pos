@@ -9,6 +9,7 @@ import { originCheck, sessionLoader } from "./middleware/auth";
 import { adminRoutes } from "./routes/admin";
 import { authRoutes } from "./routes/auth";
 import { cashRoutes } from "./routes/cash";
+import { balanceRoutes } from "./routes/balance";
 import { cardRoutes } from "./routes/cards";
 import { catalogRoutes } from "./routes/catalog";
 import { setRoutes } from "./routes/sets";
@@ -55,6 +56,7 @@ const api = new Hono<AppEnv>()
   .route("/reception", receptionRoutes)
   .route("/cash", cashRoutes)
   .route("/cards", cardRoutes)
+  .route("/balance", balanceRoutes)
   .route("/catalog", catalogRoutes)
   .route("/catalog", setRoutes)
   .route("/pos", posRoutes)

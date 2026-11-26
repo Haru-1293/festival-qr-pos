@@ -12,6 +12,7 @@ import {
   HandCoins,
   Layers,
   Package,
+  ScanSearch,
   Percent,
   FileText,
   ScrollText,
@@ -50,6 +51,7 @@ const CallBoardPage = lazy(() => import("@/pages/display/CallBoard").then((m) =>
 const CustomerHistory = lazy(() => import("@/pages/my/CustomerHome").then((m) => ({ default: m.CustomerHistory })));
 const CustomerAccount = lazy(() => import("@/pages/my/CustomerHome").then((m) => ({ default: m.CustomerAccount })));
 const CustomerHome = lazy(() => import("@/pages/my/CustomerHome").then((m) => ({ default: m.CustomerHome })));
+const BalanceInquiry = lazy(() => import("@/pages/balance/BalanceInquiry").then((m) => ({ default: m.BalanceInquiry })));
 const PosCatalog = lazy(() => import("@/pages/pos/PosCatalog").then((m) => ({ default: m.PosCatalog })));
 const CashPanel = lazy(() => import("@/pages/reception/CashPanel").then((m) => ({ default: m.CashPanel })));
 const ChargePanel = lazy(() => import("@/pages/reception/ChargePanel").then((m) => ({ default: m.ChargePanel })));
@@ -88,6 +90,7 @@ const ADMIN_NAV: NavItem[] = [
   { to: "/admin/cards", label: "カード", icon: CreditCard },
   { to: "/admin/refunds", label: "返金", icon: Undo2 },
   { to: "/admin/discounts", label: "割引", icon: Percent },
+  { to: "/admin/balance", label: "残高照会", icon: ScanSearch },
   { to: "/admin/cash", label: "現金", icon: Banknote },
   { to: "/admin/audit", label: "監査ログ", icon: ScrollText },
   { to: "/admin/legal", label: "規約", icon: FileText },
@@ -103,6 +106,7 @@ const SHOP_NAV: NavItem[] = [
   { to: "/shop/price-cuts", label: "値下げ", icon: Tag },
   { to: "/shop/coupons", label: "クーポン", icon: Ticket },
   { to: "/shop/refunds", label: "返金", icon: Undo2 },
+  { to: "/shop/balance", label: "残高照会", icon: ScanSearch },
   { to: "/shop/staff", label: "スタッフ", icon: UsersRound },
   { to: "/shop/settings", label: "店舗設定", icon: Settings },
 ];
@@ -111,6 +115,7 @@ const CLERK_NAV: NavItem[] = [
   { to: "/clerk/orders", label: "注文ステータス", icon: ChefHat },
   { to: "/clerk/cancel", label: "注文取消し", icon: Ban },
   { to: "/clerk/stock", label: "在庫", icon: Boxes },
+  { to: "/clerk/balance", label: "残高照会", icon: ScanSearch },
 ];
 const RECEPTION_NAV: NavItem[] = [
   { to: "/reception", label: "チャージ・払い戻し", icon: HandCoins, end: true },
@@ -228,6 +233,14 @@ export default function App() {
                   }
                 />
                 <Route
+                  path="balance"
+                  element={
+                    <Page>
+                      <BalanceInquiry />
+                    </Page>
+                  }
+                />
+                <Route
                   path="cash"
                   element={
                     <Page>
@@ -298,6 +311,14 @@ export default function App() {
                 <Route path="register" element={<WithShop>{(id) => <PosCatalog shopId={id} />}</WithShop>} />
                 <Route path="orders" element={<WithShop>{(id) => <OrdersBoard shopId={id} />}</WithShop>} />
                 <Route path="cancel" element={<WithShop>{(id) => <OrderCancel shopId={id} />}</WithShop>} />
+                <Route
+                  path="balance"
+                  element={
+                    <Page>
+                      <BalanceInquiry />
+                    </Page>
+                  }
+                />
                 <Route
                   path="products"
                   element={
@@ -385,6 +406,14 @@ export default function App() {
                 <Route index element={<WithShop>{(id) => <PosCatalog shopId={id} />}</WithShop>} />
                 <Route path="orders" element={<WithShop>{(id) => <OrdersBoard shopId={id} />}</WithShop>} />
                 <Route path="cancel" element={<WithShop>{(id) => <OrderCancel shopId={id} />}</WithShop>} />
+                <Route
+                  path="balance"
+                  element={
+                    <Page>
+                      <BalanceInquiry />
+                    </Page>
+                  }
+                />
                 <Route
                   path="stock"
                   element={

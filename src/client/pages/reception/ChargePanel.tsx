@@ -8,9 +8,11 @@ import { ErrorText } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { expectQr } from "@/lib/qrKind";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ApiRequestError, api } from "@/lib/api";
+import { ActivateCardForm } from "./ActivateCardForm";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
 import { useRequestId } from "@/lib/useRequestId";
@@ -38,6 +40,8 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
   const [now, setNow] = useState(Date.now());
   const [pin, setPin] = useState("");
   const [pinTries, setPinTries] = useState(0);
+  // 未有効のカードを読み取ったとき、その場で有効化するためのQR
+  const [activateToken, setActivateToken] = useState<string | null>(null);
   const look = useAction();
   const op = useAction();
   const reqId = useRequestId();
@@ -56,6 +60,7 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
     setDone(null);
     setToken("");
     setLocalError(null);
+    setActivateToken(null);
     look.setError(null);
     op.setError(null);
     reqId.renew();
@@ -64,9 +69,19 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
   const doLookup = useCallback(
     (value: string) => {
       void look.run(async () => {
-        const res = await api<LookupResponse>("/reception/lookup", {
-          body: { token: value.trim() },
-        });
+        let res: LookupResponse;
+        try {
+          res = await api<LookupResponse>("/reception/lookup", {
+            body: { token: value.trim() },
+          });
+        } catch (e) {
+          if (e instanceof ApiRequestError && e.code === "CARD_NOT_ACTIVATED") {
+            setActivateToken(value.trim());
+            setToken("");
+            return;
+          }
+          throw e;
+        }
         setPin("");
         setPinTries(0);
         setLookup(res);
@@ -194,6 +209,23 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
     );
   }
 
+  // ---------- 未有効のカード: 受付で有効化 ----------
+  if (activateToken && !lookup) {
+    return (
+      <ActivateCardForm
+        token={activateToken}
+        onCancel={reset}
+        onChanged={onChanged}
+        onContinue={(l) => {
+          setActivateToken(null);
+          setLookup(l);
+          setMode("charge");
+          setCash("");
+        }}
+      />
+    );
+  }
+
   // ---------- QR読み取り前 ----------
   if (!lookup) {
     return (
@@ -202,8 +234,8 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
           <CardTitle>お客様のQRを読み取る</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {scanning && <QrScanner onScan={onScan} onClose={() => setScanning(false)} />}
-          <p className="text-sm text-muted-foreground">お客様のスマホに「提示用QR」を表示してもらい、読み取ってください。読み取ったQRはその場で使えなくなります。</p>
+          {scanning && <QrScanner onScan={onScan} accept={expectQr(["WALLET", "CARD_OR_CLERK"], "お客様のスマホのQRまたはカード")} onClose={() => setScanning(false)} />}
+          <p className="text-sm text-muted-foreground">お客様のスマホに「提示用QR」を表示してもらい、読み取ってください。読み取ったQRはその場で使えなくなります。まだ有効化していないカードを読み取ると、その場で有効化(チャージも同時)できます。</p>
           <Button size="lg" className="h-16 text-lg" onClick={() => setScanning(true)} disabled={look.pending || !scannerSupported()}>
             <ScanLine className="!size-6" /> QRを読み取る
           </Button>

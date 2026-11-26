@@ -5,6 +5,7 @@ import type { AppEnv } from "../env";
 import { auditStmt } from "../lib/audit";
 import { getExpiryPolicy, maxExpiry, resolveExpiry } from "../lib/expiry";
 import { openText, sealText, vaultSecret } from "../lib/vault";
+import { activateCard } from "../lib/cardActivate";
 import { capByGlobal } from "../lib/globalExpiry";
 import { CARD_SELECT, type CardRow, cardUsableSql, newCardToken, toCardDto } from "../lib/cards";
 import { hashPin, sha256Hex } from "../lib/crypto";
@@ -16,7 +17,7 @@ import { requireAuth, requireRole } from "../middleware/auth";
 
 const id26 = z.string().length(26);
 const idParam = zv("param", z.object({ id: id26 }));
-const pinSchema = z.string().regex(/^[0-9]{4}$/, "PINは4桁の数字にしてください");
+export const pinSchema = z.string().regex(/^[0-9]{4}$/, "PINは4桁の数字にしてください");
 const reasonSchema = z.string().trim().min(1, "理由を入力してください").max(200, "理由は200文字以内にしてください");
 const expirySchema = z.number().int().optional();
 
@@ -26,7 +27,7 @@ function pepper(env: { PIN_PEPPER?: string }): string {
 }
 
 /** 期限の指定が無ければ、管理者が設定した既定の期限にする。指定があっても6か月特例の上限は超えられない */
-async function checkExpiry(db: D1Database, expiresAt: number | undefined, now: number): Promise<number> {
+export async function checkExpiry(db: D1Database, expiresAt: number | undefined, now: number): Promise<number> {
   let e = expiresAt;
   if (e === undefined) {
     const d = resolveExpiry(await getExpiryPolicy(db), now);
@@ -147,27 +148,7 @@ export const cardRoutes = new Hono<AppEnv>()
       if (card.status !== "ISSUED") throw conflict("このカードはすでに有効化されているか、使えない状態です", "CARD_STATE");
       const now = Date.now();
       const expiresAt = await checkExpiry(c.env.DB, b.expiresAt ?? card.expires_at ?? undefined, now);
-      const pinHash = await hashPin(b.pin, pepper(c.env));
-      const walletId = newId(now);
-      const res = await db.batch([
-        // ウォレットはカードが未有効化のときだけ作る。同じ batch(同一トランザクション)でカードも更新する
-        db
-          .prepare("INSERT INTO wallets (id, owner_user_id, balance, status, expires_at, created_at) SELECT ?, NULL, 0, 'ACTIVE', ?, ? WHERE EXISTS (SELECT 1 FROM cards WHERE id = ? AND status = 'ISSUED')")
-          .bind(walletId, expiresAt, now, id),
-        db
-          .prepare(
-            `UPDATE cards SET status = 'ACTIVE', wallet_id = ?, nickname = ?, pin_hash = ?, expires_at = ?, memo = COALESCE(?, memo), activated_at = ?, activated_by = ?
-              WHERE id = ? AND status = 'ISSUED' AND EXISTS (SELECT 1 FROM wallets WHERE id = ?)`,
-          )
-          .bind(walletId, b.nickname, pinHash, expiresAt, b.memo || null, now, auth.userId, id, walletId),
-        db
-          .prepare(
-            `INSERT INTO audit_logs (id, actor_user_id, actor_role, action, target_type, target_id, before_json, after_json, created_at)
-             SELECT ?, ?, ?, 'card.activate', 'card', ?, NULL, ?, ? WHERE EXISTS (SELECT 1 FROM cards WHERE id = ? AND status = 'ACTIVE' AND activated_at = ?)`,
-          )
-          .bind(newId(now), auth.userId, auth.role, id, JSON.stringify({ displayNo: card.display_no, nickname: b.nickname, walletId, expiresAt }), now, id, now),
-      ]);
-      if ((res[1].meta.changes ?? 0) !== 1) throw conflict("このカードはすでに有効化されています", "CARD_STATE");
+      await activateCard(db, c.env, auth, card, { nickname: b.nickname, pin: b.pin, memo: b.memo, expiresAt });
       return c.json({ card: toCardDto(await loadCard(db, id), now) }, 201);
     },
   )

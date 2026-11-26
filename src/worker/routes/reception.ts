@@ -3,10 +3,12 @@ import { Hono } from "hono";
 import { z } from "zod";
 import type { CashOpResult, LookupResponse, ReceptionSummary } from "@shared/api";
 import { cashToUnits, unitsToCash } from "@shared/currency";
-import type { AppEnv } from "../env";
+import type { AppEnv, AuthContext } from "../env";
 import { auditStmt, auditStmtIfExists } from "../lib/audit";
 import { loadLedgerResult, loadOpenTotals, loadRecentEvents } from "../lib/cash";
-import { cardUsableSql } from "../lib/cards";
+import { CARD_SELECT, type CardRow, cardUsableSql } from "../lib/cards";
+import { activateCard } from "../lib/cardActivate";
+import { checkExpiry, pinSchema } from "./cards";
 import { sha256Hex, verifyPin } from "../lib/crypto";
 import { badRequest, conflict, forbidden, notFound } from "../lib/errors";
 import { newId } from "../lib/ids";
@@ -101,6 +103,65 @@ const cardGuardArgs = (l: LookupRow, now: number): (string | number | null)[] =>
 /** (払戻しは、期限切れのカードでも残高を返せる。停止・削除されたカードは不可) */
 const cardPinGuard = `(? IS NULL OR EXISTS (SELECT 1 FROM cards c WHERE c.id = ? AND c.pin_hash = ? AND c.status = 'ACTIVE'))`;
 
+/** 現金チャージの本体(チャージ画面と、受付でのカード有効化+チャージの両方が使う) */
+async function performCharge(
+  db: D1Database,
+  auth: AuthContext,
+  lookup: LookupRow,
+  b: { requestId: string; cashAmount: number },
+): Promise<{ body: CashOpResult; status: 200 | 201 }> {
+  const currency = await getCurrency(db);
+  const units = cashToUnits(b.cashAmount, currency.yenPerUnit);
+  if (units === null || units <= 0) {
+    throw badRequest(`${b.cashAmount.toLocaleString()}円は換算できません(1${currency.shortName}=${currency.yenPerUnit}円)`, "BAD_AMOUNT");
+  }
+  const ledgerId = newId();
+  const eventId = newId();
+  const now = Date.now();
+  try {
+    await db.batch([
+      // ① 台帳(ウォレットが有効なときだけ作られる)。残高変動の唯一の記録
+      db
+        .prepare(
+          `INSERT INTO wallet_ledger (id, wallet_id, kind, amount, balance_after, ref_type, ref_id, operator_user_id, idempotency_key, created_at)
+           SELECT ?, w.id, 'CHARGE', ?, w.balance + ?, 'CASH_EVENT', ?, ?, ?, ?
+             FROM wallets w WHERE w.id = ? AND ${walletChargeableSql(Date.now())} AND ${cardLookupGuard}`,
+        )
+        .bind(ledgerId, units, units, eventId, auth.userId, b.requestId, now, lookup.wallet_id, ...cardGuardArgs(lookup, Date.now())),
+      // ② 残高(①ができたときだけ更新)
+      db
+        .prepare(
+          `UPDATE wallets SET balance = (SELECT balance_after FROM wallet_ledger WHERE id = ?)
+            WHERE id = ? AND EXISTS (${LEDGER_EXISTS_SQL})`,
+        )
+        .bind(ledgerId, lookup.wallet_id, ledgerId),
+      // ③ 現金台帳(円)
+      db
+        .prepare(
+          `INSERT INTO cash_events (id, reception_user_id, kind, amount, ledger_id, created_at, request_id)
+           SELECT ?, ?, 'CHARGE', ?, ?, ?, ? WHERE EXISTS (${LEDGER_EXISTS_SQL})`,
+        )
+        .bind(eventId, auth.userId, b.cashAmount, ledgerId, now, b.requestId, ledgerId),
+      auditStmtIfExists(
+        db,
+        { actor: auth, action: "cash.charge", targetType: "wallet", targetId: lookup.wallet_id, after: { ledgerId, units, cashYen: b.cashAmount } },
+        LEDGER_EXISTS_SQL,
+        [ledgerId],
+      ),
+    ]);
+  } catch (e) {
+    if (isUnique(e)) {
+      const again = await tryReplay(db, b.requestId, auth.userId, "CHARGE", { walletId: lookup.wallet_id, cashAmount: b.cashAmount });
+      if (again) return { body: again, status: 200 as const };
+      throw conflict("このリクエストIDはすでに使われています", "REQUEST_ID_REUSED");
+    }
+    throw e;
+  }
+  const res = await loadLedgerResult(db, ledgerId);
+  if (!res) throw conflict("このウォレットは現在ご利用できません(停止中・有効期限切れなど)。チャージされていません", "WALLET_INACTIVE");
+  return { body: { ...res.result, replayed: false } satisfies CashOpResult, status: 201 as const };
+}
+
 export const receptionRoutes = new Hono<AppEnv>()
   .use("*", requireRole("RECEPTION"))
 
@@ -141,7 +202,7 @@ export const receptionRoutes = new Hono<AppEnv>()
         .bind(hash)
         .first<{ id: string; status: string; expires_at: number | null; display_no: string; nickname: string | null; wallet_id: string | null; wstatus: LookupResponse["wallet"]["status"] | null; balance: number | null; wexpires: number | null }>();
       if (!card) throw badRequest("このカードは登録されていないか、無効になっています", "INVALID_QR");
-      if (card.status === "ISSUED") throw forbidden("このカードはまだ有効化されていません。全体管理者に有効化を依頼してください", "CARD_INACTIVE");
+      if (card.status === "ISSUED") throw forbidden("このカードはまだ有効化されていません", "CARD_NOT_ACTIVATED");
       if (card.status === "SUSPENDED") throw forbidden("このカードは一時停止中です", "CARD_INACTIVE");
       if (card.status !== "ACTIVE") throw forbidden("このカードは使えません", "CARD_INACTIVE");
       // 期限切れのカードも読み取れる(残高の払戻しだけできる。チャージ・支払いはできない)
@@ -220,6 +281,65 @@ export const receptionRoutes = new Hono<AppEnv>()
     } satisfies LookupResponse);
   })
 
+  // 受付でのカード有効化: 未有効のカードを読み取り、ニックネームとPINを設定して使えるようにする。希望すればそのままチャージも行う
+  .post(
+    "/activate-card",
+    zv(
+      "json",
+      z.object({
+        token: z.string().trim().max(100),
+        nickname: z.string().trim().min(1, "ニックネームを入力してください").max(30, "ニックネームは30文字以内にしてください"),
+        pin: pinSchema,
+        /** 同時にチャージする現金(円)。0・なしならチャージしない */
+        cashAmount: z.number().int().min(0).max(MAX_CHARGE_YEN, `1回のチャージは${MAX_CHARGE_YEN.toLocaleString()}円までです`).default(0),
+        requestId: requestIdSchema,
+      }),
+    ),
+    async (c) => {
+      const auth = requireAuth(c);
+      const b = c.req.valid("json");
+      const db = c.env.DB;
+      if (!CARD_QR_PATTERN.test(b.token)) throw badRequest("カードのQRではありません", "INVALID_QR");
+      const card = await db.prepare(`${CARD_SELECT} WHERE c.qr_token_hash = ?`).bind(await sha256Hex(b.token)).first<CardRow>();
+      if (!card) throw badRequest("このカードは登録されていないか、無効になっています", "INVALID_QR");
+      const now = Date.now();
+      const currency = await getCurrency(db);
+      const lookupFor = async (walletId: string, cardId: string) => {
+        const lookupId = newId();
+        const expiresAt = now + LOOKUP_TTL_MS;
+        await db.batch([
+          db
+            .prepare(`INSERT INTO wallet_lookups (id, wallet_id, card_id, reception_user_id, created_at, expires_at) SELECT ?, c.wallet_id, c.id, ?, ?, ? FROM cards c WHERE c.id = ? AND c.status = 'ACTIVE'`)
+            .bind(lookupId, auth.userId, now, expiresAt, cardId),
+        ]);
+        const w = await db.prepare("SELECT w.id, w.balance, w.status, w.expires_at, c.nickname, c.display_no FROM wallets w JOIN cards c ON c.wallet_id = w.id WHERE w.id = ?").bind(walletId).first<{ id: string; balance: number; status: LookupResponse["wallet"]["status"]; expires_at: number | null; nickname: string | null; display_no: string }>();
+        if (!w) throw notFound("ウォレットが見つかりません");
+        return { lookupId, expiresAt, wallet: { id: w.id, nickname: w.nickname, balance: w.balance, status: w.status, expired: w.expires_at !== null && w.expires_at <= Date.now() }, card: { displayNo: w.display_no }, yenPerUnit: currency.yenPerUnit } satisfies LookupResponse;
+      };
+
+      if (card.status !== "ISSUED") {
+        // 通信が途切れて同じ操作を再送したときは、できあがった結果を返す
+        if (b.cashAmount > 0 && card.wallet_id && card.status === "ACTIVE") {
+          const again = await tryReplay(db, b.requestId, auth.userId, "CHARGE", { walletId: card.wallet_id, cashAmount: b.cashAmount });
+          if (again) return c.json({ lookup: await lookupFor(card.wallet_id, card.id), charge: again, chargeError: null, replayed: true });
+        }
+        throw conflict("このカードはすでに有効化されているか、使えない状態です", "CARD_STATE");
+      }
+      const preset = card.expires_at !== null && card.expires_at > now ? card.expires_at : undefined;
+      const expiresAt = await checkExpiry(db, preset, now);
+      const walletId = await activateCard(db, c.env, auth, card, { nickname: b.nickname, pin: b.pin, expiresAt });
+      const lookup = await lookupFor(walletId, card.id);
+      if (b.cashAmount === 0) return c.json({ lookup, charge: null, chargeError: null, replayed: false }, 201);
+      // 有効化は済んでいる。チャージだけ失敗したときは、その旨を返す(カードは読み取り済みなので、そのままチャージをやり直せる)
+      try {
+        const out = await performCharge(db, auth, { id: lookup.lookupId, wallet_id: walletId, card_id: card.id, expires_at: lookup.expiresAt }, { requestId: b.requestId, cashAmount: b.cashAmount });
+        return c.json({ lookup: { ...lookup, wallet: { ...lookup.wallet, balance: out.body.balanceAfter } }, charge: out.body, chargeError: null, replayed: false }, 201);
+      } catch (e) {
+        return c.json({ lookup, charge: null, chargeError: e instanceof Error ? e.message : "チャージできませんでした", replayed: false }, 201);
+      }
+    },
+  )
+
   // 現金チャージ: 受け取った現金(円)をポイントに換算して残高へ加算し、現金台帳に記録する
   .post(
     "/charge",
@@ -240,56 +360,8 @@ export const receptionRoutes = new Hono<AppEnv>()
       if (replay) return c.json(replay);
       assertLookupFresh(lookup);
 
-      const currency = await getCurrency(db);
-      const units = cashToUnits(b.cashAmount, currency.yenPerUnit);
-      if (units === null || units <= 0) {
-        throw badRequest(`${b.cashAmount.toLocaleString()}円は換算できません(1${currency.shortName}=${currency.yenPerUnit}円)`, "BAD_AMOUNT");
-      }
-      const ledgerId = newId();
-      const eventId = newId();
-      const now = Date.now();
-      try {
-        await db.batch([
-          // ① 台帳(ウォレットが有効なときだけ作られる)。残高変動の唯一の記録
-          db
-            .prepare(
-              `INSERT INTO wallet_ledger (id, wallet_id, kind, amount, balance_after, ref_type, ref_id, operator_user_id, idempotency_key, created_at)
-               SELECT ?, w.id, 'CHARGE', ?, w.balance + ?, 'CASH_EVENT', ?, ?, ?, ?
-                 FROM wallets w WHERE w.id = ? AND ${walletChargeableSql(Date.now())} AND ${cardLookupGuard}`,
-            )
-            .bind(ledgerId, units, units, eventId, auth.userId, b.requestId, now, lookup.wallet_id, ...cardGuardArgs(lookup, Date.now())),
-          // ② 残高(①ができたときだけ更新)
-          db
-            .prepare(
-              `UPDATE wallets SET balance = (SELECT balance_after FROM wallet_ledger WHERE id = ?)
-                WHERE id = ? AND EXISTS (${LEDGER_EXISTS_SQL})`,
-            )
-            .bind(ledgerId, lookup.wallet_id, ledgerId),
-          // ③ 現金台帳(円)
-          db
-            .prepare(
-              `INSERT INTO cash_events (id, reception_user_id, kind, amount, ledger_id, created_at, request_id)
-               SELECT ?, ?, 'CHARGE', ?, ?, ?, ? WHERE EXISTS (${LEDGER_EXISTS_SQL})`,
-            )
-            .bind(eventId, auth.userId, b.cashAmount, ledgerId, now, b.requestId, ledgerId),
-          auditStmtIfExists(
-            db,
-            { actor: auth, action: "cash.charge", targetType: "wallet", targetId: lookup.wallet_id, after: { ledgerId, units, cashYen: b.cashAmount } },
-            LEDGER_EXISTS_SQL,
-            [ledgerId],
-          ),
-        ]);
-      } catch (e) {
-        if (isUnique(e)) {
-          const again = await tryReplay(db, b.requestId, auth.userId, "CHARGE", { walletId: lookup.wallet_id, cashAmount: b.cashAmount });
-          if (again) return c.json(again);
-          throw conflict("このリクエストIDはすでに使われています", "REQUEST_ID_REUSED");
-        }
-        throw e;
-      }
-      const res = await loadLedgerResult(db, ledgerId);
-      if (!res) throw conflict("このウォレットは現在ご利用できません(停止中・有効期限切れなど)。チャージされていません", "WALLET_INACTIVE");
-      return c.json({ ...res.result, replayed: false } satisfies CashOpResult, 201);
+      const out = await performCharge(db, auth, lookup, b);
+      return c.json(out.body, out.status);
     },
   )
 

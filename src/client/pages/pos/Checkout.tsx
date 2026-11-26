@@ -3,7 +3,7 @@ import { ArrowLeft, CircleCheck, Minus, Plus, ScanLine, Ticket, Trash2 } from "l
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PayResult, PaySession, PayStatus, ProductDto, Quote, QuoteDiscount, QuoteLine, SetDto } from "@shared/api";
 import { PinPad } from "@/components/PinPad";
-import { QrScanner, scannerSupported } from "@/components/QrScanner";
+import { QrScanner, ScanAlertPopup, scannerSupported } from "@/components/QrScanner";
 import { ErrorText } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { ApiRequestError, api, errorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { viewCartLine } from "@/lib/cartView";
+import { expectQr } from "@/lib/qrKind";
 import { type Cart, toCartItems } from "@/lib/useCart";
 import { useRequestId } from "@/lib/useRequestId";
 import { cn, formatDateTime } from "@/lib/utils";
@@ -54,6 +55,8 @@ export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRe
   const [codeInput, setCodeInput] = useState("");
   const [coupon, setCoupon] = useState("");
   const [couponScan, setCouponScan] = useState(false);
+  // 読み取りの警告(使用済みのクーポンなど)。読み取り画面より上のポップアップで出す
+  const [scanAlert, setScanAlert] = useState<string | null>(null);
   const [tag, setTag] = useState("");
   const [preview, setPreview] = useState<Quote | null>(null);
   const reqId = useRequestId();
@@ -67,6 +70,14 @@ export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRe
   const localTotal = rows.reduce((s, r) => s + r.v.unit * r.line.quantity, 0);
   const items = toCartItems(cart);
 
+  // 使えないクーポン(使用済み・期限切れなど)は、ポップアップで知らせて、自動で外す
+  const couponError = coupon ? (preview?.couponError ?? null) : null;
+  useEffect(() => {
+    if (!couponError) return;
+    setScanAlert(couponError);
+    setCoupon("");
+    setCodeInput("");
+  }, [couponError]);
   const displayTotal = preview && preview.problems.length === 0 ? preview.total : localTotal;
 
   // 読み取りの関数(カメラの再起動を避けるため固定)から、いつでも最新のカートを読めるようにする
@@ -137,8 +148,10 @@ export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRe
       } catch (e) {
         if (e instanceof ApiRequestError && e.code === "CART_UNAVAILABLE") showCartProblem(e);
         else if (e instanceof ApiRequestError && e.code === "COUPON_INVALID") {
-          // QRは消費されていない。クーポンを外すか直してから、もう一度読み取れる
-          setError(`${e.message}(クーポンを外すか、別のコードを入力してください。お客様のQRは使われていません)`);
+          // QRは消費されていない。クーポンを外した状態で、もう一度読み取れる
+          setScanAlert(`${e.message}\nクーポンを外しました。お客様のQRは使われていません。`);
+          setCoupon("");
+          setCodeInput("");
           setStep("cart");
         } else if (e instanceof ApiRequestError && (e.code === "TAG_IN_USE" || e.code === "TAG_REQUIRED")) {
           // QRは消費されていない。番号札を入れ直してから、もう一度読み取れる
@@ -415,7 +428,7 @@ export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRe
             )}
             <p className="text-center text-sm font-semibold">お客様のQR(スマホ画面またはカード)を読み取ってください</p>
             {scanning ? (
-              <QrScanner onScan={(v) => void scan(v)} onClose={() => setScanning(false)} />
+              <QrScanner onScan={(v) => void scan(v)} accept={expectQr(["WALLET", "CARD_OR_CLERK"], "お客様のスマホのQRまたはカード")} onClose={() => setScanning(false)} />
             ) : (
               <Button size="lg" onClick={() => setScanning(true)} disabled={busy || !scannerSupported()}>
                 <ScanLine /> カメラで読み取る
@@ -496,14 +509,17 @@ export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRe
         </p>
       )}
       <ErrorText message={error} />
+      {scanAlert && <ScanAlertPopup title="クーポンを使えません" message={scanAlert} onClose={() => setScanAlert(null)} />}
       {rows.length > 0 && (
         <Card className="p-3">
           <form
             className="flex gap-2"
             onSubmit={(e) => {
               e.preventDefault();
+              if (codeInput.trim() === "") return;
               setError(null);
               setCoupon(codeInput.trim());
+              setCodeInput(""); // 適用したら入力欄は空にする
             }}
           >
             <div className="relative flex-1">
@@ -523,22 +539,18 @@ export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRe
                 <ScanLine />
               </Button>
             )}
-            <Button type="submit" variant="outline" disabled={codeInput.trim() === coupon}>
-              {codeInput.trim() === "" && coupon ? "外す" : "適用"}
+            <Button type="submit" variant="outline" disabled={codeInput.trim() === ""}>
+              適用
             </Button>
           </form>
           {couponScan && (
             <div className="mt-3">
               <QrScanner
+                accept={expectQr(["COUPON"], "クーポン")}
                 onScan={(v) => {
-                  const t = v.trim();
-                  if (/^FES1:[UC]:/.test(t)) {
-                    setError("これはクーポンのQRではありません(お客様の支払いQRです)");
-                    return;
-                  }
-                  const code = t.toUpperCase().replace(/^FES1:K:/, "");
+                  const code = v.trim().toUpperCase().replace(/^FES1:K:/, "");
                   setError(null);
-                  setCodeInput(code);
+                  setCodeInput("");
                   setCoupon(code);
                   setCouponScan(false);
                 }}
@@ -546,8 +558,19 @@ export function Checkout({ shopId, products, sets, cart, tagMode, onChange, onRe
               />
             </div>
           )}
-          {coupon && preview?.couponError && <p className="mt-2 text-sm font-semibold text-destructive">{preview.couponError}</p>}
-          {coupon && preview && !preview.couponError && preview.discounts.some((d) => d.kind !== "AUTO") && <p className="mt-2 text-sm font-semibold text-primary">クーポンを適用しました</p>}
+          {/* 適用中のクーポン。まだ使用されていないので、いつでも外せる(外してもクーポンは使えるまま) */}
+          {coupon && (
+            <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-secondary px-3 py-2">
+              <span className="min-w-0 truncate text-sm font-semibold">
+                <Ticket className="mr-1 inline size-4" />
+                <span className="font-mono">{coupon}</span>
+                {preview && !preview.couponError && preview.discounts.some((d) => d.kind !== "AUTO") ? " を適用中" : " を確認中…"}
+              </span>
+              <Button type="button" size="sm" variant="outline" onClick={() => { setCoupon(""); setCodeInput(""); setError(null); }}>
+                外す
+              </Button>
+            </div>
+          )}
         </Card>
       )}
       <div className="sticky bottom-0 -mx-4 flex flex-col gap-2 border-t border-border bg-background px-4 py-3">
