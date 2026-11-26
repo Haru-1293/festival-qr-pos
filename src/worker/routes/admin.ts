@@ -1,3 +1,4 @@
+import { vaultSecret } from "../lib/vault";
 import { zv as zValidator } from "../lib/validate";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -13,7 +14,7 @@ import { getExpiryPolicy, validatePolicy } from "../lib/expiry";
 import { newId } from "../lib/ids";
 import { historyStmt } from "../lib/shopname";
 import { SETTING_KEYS, getCurrency, getOperations, setSettingStmt } from "../lib/settings";
-import { buildReceptionQrIssue, createStaffUser, getUserBasic, isUniqueViolation, listUsers } from "../lib/users";
+import { readLoginQr, buildReceptionQrIssue, createStaffUser, getUserBasic, isUniqueViolation, listUsers } from "../lib/users";
 import { nicknameSchema, passwordSchema, staffLoginIdSchema } from "../lib/validation";
 import { requireAuth, requireRole } from "../middleware/auth";
 
@@ -195,7 +196,7 @@ export const adminRoutes = new Hono<AppEnv>()
     const { nickname, loginId, password } = c.req.valid("json");
     const passwordHash = password ? await hashPassword(password) : null;
     const id = newId();
-    const qr = await buildReceptionQrIssue(c.env.DB, auth, id, "新規発行");
+    const qr = await buildReceptionQrIssue(c.env.DB, auth, id, "新規発行", vaultSecret(c.env));
     await c.env.DB.batch([
       c.env.DB.prepare(
         `INSERT INTO users (id, role, login_id, password_hash, nickname, status, created_at, created_by)
@@ -246,11 +247,23 @@ export const adminRoutes = new Hono<AppEnv>()
       const target = await getUserBasic(c.env.DB, id);
       if (!target || target.role !== "RECEPTION") throw notFound("受付担当者が見つかりません");
       if (target.status !== "ACTIVE") throw badRequest("停止中の担当者にはQRを発行できません");
-      const qr = await buildReceptionQrIssue(c.env.DB, auth, id, reason ?? "再発行");
+      const qr = await buildReceptionQrIssue(c.env.DB, auth, id, reason ?? "再発行", vaultSecret(c.env));
       await c.env.DB.batch(qr.stmts);
       return c.json({ userId: id, token: qr.token } satisfies ReceptionQrIssued);
     },
   )
+  // 有効なログインQRを何度でも表示する(印刷のやり直し・保存ミスのため)。閲覧は監査ログに残る
+  .get("/users/:id/login-qr", idParam, async (c) => {
+    const auth = requireAuth(c);
+    const { id } = c.req.valid("param");
+    const target = await getUserBasic(c.env.DB, id);
+    if (!target || (target.role !== "RECEPTION" && target.role !== "CLERK")) throw notFound("対象の担当者が見つかりません");
+    const qr = await readLoginQr(c.env.DB, vaultSecret(c.env), id);
+    if (!qr) throw notFound("このQRは再表示できません(保存される前に発行されたQRです)。「QR再発行」で作り直してください", "QR_NOT_STORED");
+    await c.env.DB.batch([auditStmt(c.env.DB, { actor: auth, action: "login_qr.view", targetType: "user", targetId: id })]);
+    c.header("Cache-Control", "no-store");
+    return c.json({ userId: id, token: qr.token, issuedAt: qr.issuedAt });
+  })
   // 受付ログインQRの即時失効(再発行はしない)
   .post(
     "/users/:id/reception-qr/revoke",

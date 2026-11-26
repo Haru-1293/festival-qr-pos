@@ -204,6 +204,21 @@ export function StaffManager({ shopId }: { shopId: string }) {
                       <QrCode className="!size-4" /> {u.loginQrIssuedAt ? "QR再発行" : "ログインQR発行"}
                     </Button>
                   )}
+                  {u.role === "CLERK" && u.loginQrIssuedAt && u.status === "ACTIVE" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={row.pending}
+                      onClick={() =>
+                        void row.run(async () => {
+                          const r = await api<{ token: string }>(`/shops/${shopId}/staff/${u.id}/qr`);
+                          setQr({ issued: { userId: u.id, token: r.token }, nickname: u.nickname, loginId: u.loginId, role: u.role, shopName: u.shopName });
+                        })
+                      }
+                    >
+                      <QrCode className="!size-4" /> QR表示・印刷
+                    </Button>
+                  )}
                   {u.role === "CLERK" && u.loginQrIssuedAt && (
                     <Button size="sm" variant="outline" onClick={() => revokeQr(u)} disabled={row.pending}>
                       QR失効

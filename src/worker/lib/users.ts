@@ -1,3 +1,4 @@
+import { openText, sealText } from "./vault";
 import type { UserDto } from "@shared/api";
 import type { Role } from "@shared/roles";
 import type { AuthContext } from "../env";
@@ -62,9 +63,11 @@ export async function buildLoginQrIssue(
   userId: string,
   role: keyof typeof LOGIN_QR_PREFIX,
   reason: string | null,
+  secret: string | null = null,
 ): Promise<{ token: string; stmts: D1PreparedStatement[] }> {
   const token = `${LOGIN_QR_PREFIX[role]}${randomToken(24)}`;
   const hash = await sha256Hex(token);
+  const sealed = await sealText(secret, token); // 何度でも表示できるよう、暗号化して保存する
   const now = Date.now();
   return {
     token,
@@ -79,8 +82,8 @@ export async function buildLoginQrIssue(
         .prepare("INSERT INTO token_tombstones (token_hash, kind, created_at) VALUES (?, 'RECEPTION_LOGIN_QR', ?)")
         .bind(hash, now),
       db
-        .prepare("INSERT INTO reception_login_qrs (token_hash, user_id, issued_at, issued_by) VALUES (?, ?, ?, ?)")
-        .bind(hash, userId, now, actor.userId),
+        .prepare("INSERT INTO reception_login_qrs (token_hash, user_id, issued_at, issued_by, token_enc) VALUES (?, ?, ?, ?, ?)")
+        .bind(hash, userId, now, actor.userId, sealed),
       db.prepare("DELETE FROM sessions WHERE user_id = ?").bind(userId),
       auditStmt(db, {
         actor,
@@ -93,8 +96,8 @@ export async function buildLoginQrIssue(
   };
 }
 
-export function buildReceptionQrIssue(db: D1Database, actor: AuthContext, userId: string, reason: string | null) {
-  return buildLoginQrIssue(db, actor, userId, "RECEPTION", reason);
+export function buildReceptionQrIssue(db: D1Database, actor: AuthContext, userId: string, reason: string | null, secret: string | null = null) {
+  return buildLoginQrIssue(db, actor, userId, "RECEPTION", reason, secret);
 }
 
 interface UserRow {
@@ -169,4 +172,14 @@ export async function getUserBasic(
     .prepare("SELECT id, role, shop_id, status, nickname, login_id FROM users WHERE id = ? AND status <> 'DELETED'")
     .bind(id)
     .first();
+}
+
+/** 有効なログインQRの文字列を復号して返す(何度でも表示するため)。発行時に保存できていない古いQRは null */
+export async function readLoginQr(db: D1Database, secret: string | null, userId: string): Promise<{ token: string; issuedAt: number } | null> {
+  const r = await db
+    .prepare("SELECT token_enc, issued_at FROM reception_login_qrs WHERE user_id = ? AND revoked_at IS NULL")
+    .bind(userId)
+    .first<{ token_enc: string | null; issued_at: number }>();
+  const token = await openText(secret, r?.token_enc ?? null);
+  return r && token ? { token, issuedAt: r.issued_at } : null;
 }

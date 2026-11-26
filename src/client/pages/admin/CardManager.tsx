@@ -1,8 +1,7 @@
 import { Ban, KeyRound, Play, Printer, QrCode, RefreshCw, ScanLine, Search, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { createPortal } from "react-dom";
 import type { CardDto, CardStatus, ExpiryPolicy, IssuedCard } from "@shared/api";
-import { QrCodeView } from "@/components/QrCodeView";
+import { PrintSheet as PrintSheetBase } from "@/components/print/PrintSheet";
 import { QrScanner, scannerSupported } from "@/components/QrScanner";
 import { ErrorText, Field } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
@@ -117,7 +116,7 @@ function IssueCards() {
         <CardHeader>
           <CardTitle>カードを発行</CardTitle>
           <CardDescription>
-            発行したカードは「未有効化」の在庫になります(ニックネーム・PIN・残高なし)。QRはこの画面で印刷してください。QRの文字列はサーバーに残らないため、あとから同じQRは表示できません。
+            発行したカードは「未有効化」の在庫になります(ニックネーム・PIN・残高なし)。発行後にQRを印刷できます。QRは暗号化して保存されるので、カード一覧の「QR表示・印刷」から何度でも表示・印刷できます。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -141,48 +140,27 @@ function IssueCards() {
           </form>
         </CardContent>
       </Card>
-      {issued && <PrintSheet cards={issued} title="発行したカード" onClose={() => setIssued(null)} />}
+      {issued && <PrintSheet cards={issued} title="発行したカード" fresh onClose={() => setIssued(null)} />}
     </>
   );
 }
 
-/** 印刷用のカード一覧。印刷時はこのシートだけが出る(index.css) */
-function PrintSheet({ cards, title, onClose }: { cards: IssuedCard[]; title: string; onClose: () => void }) {
-  useEffect(() => {
-    document.body.classList.add("print-sheet-open");
-    return () => document.body.classList.remove("print-sheet-open");
-  }, []);
-  return createPortal(
-    <div className="sheet-host fixed inset-0 z-50 overflow-auto bg-background p-4" role="dialog" aria-label={title}>
-      <div className="mx-auto max-w-3xl">
-        <div className="mb-3 flex flex-col gap-2 print:hidden">
-          <p className="text-lg font-bold">
-            {title}({cards.length}枚)
-          </p>
-          <p className="rounded-lg bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900">
-            このQRは今だけ表示できます。印刷または保存してから閉じてください(閉じたあとは同じQRを表示できません。未有効化のカードなら、QRを作り直せます)。
-          </p>
-          <div className="flex gap-2">
-            <Button onClick={() => window.print()}>
-              <Printer /> 印刷する
-            </Button>
-            <Button variant="outline" onClick={onClose}>
-              閉じる
-            </Button>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 print:grid-cols-3">
-          {cards.map((c) => (
-            <div key={c.id} className="flex break-inside-avoid flex-col items-center gap-1 rounded-xl border border-border bg-white p-3 text-black">
-              <QrCodeView value={c.token} size={150} />
-              <p className="text-lg font-extrabold tracking-wider">{c.displayNo}</p>
-              {c.expiresAt > 0 && <p className="text-[10px]">有効期限 {toDateInput(c.expiresAt)}</p>}
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>,
-    document.body,
+/** カードのQRの印刷シート。デザイン(背景画像+位置)を選べ、同じカードを別のデザインで何度でも刷り直せる */
+function PrintSheet({ cards, title, onClose, fresh }: { cards: IssuedCard[]; title: string; onClose: () => void; fresh?: boolean }) {
+  const { settings } = useAuth();
+  return (
+    <PrintSheetBase
+      kind="CARD"
+      title={title}
+      canEdit
+      onClose={onClose}
+      items={cards.map((c) => ({ qr: c.token, displayNo: c.displayNo, expiry: c.expiresAt > 0 ? toDateInput(c.expiresAt) : undefined, festival: settings.festivalName }))}
+      notice={
+        <p className="rounded-lg bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900">
+          {fresh ? "発行しました。" : ""}QRは暗号化して保存されています。カードの一覧の「QR表示・印刷」から、あとで何度でも同じQRを表示・印刷できます(閲覧は記録されます)。
+        </p>
+      }
+    />
   );
 }
 
@@ -394,6 +372,20 @@ function CardList() {
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [printCards, setPrintCards] = useState<IssuedCard[] | null>(null);
+
+  // 表示中のカードのQRをまとめて印刷する(1回100枚まで)
+  const printShown = async () => {
+    try {
+      const ids = (cards ?? []).filter((c) => c.status !== "DELETED").slice(0, 100).map((c) => c.id);
+      const r = await api<{ cards: IssuedCard[]; missing: string[] }>("/cards/qr-batch", { body: { ids } });
+      if (r.cards.length === 0) throw new Error("再表示できるQRがありません(保存される前に発行されたカードです)");
+      setError(r.missing.length > 0 ? `${r.missing.length}枚(${r.missing.slice(0, 5).join("・")}${r.missing.length > 5 ? "…" : ""})は、保存される前に発行されたため含まれていません` : null);
+      setPrintCards(r.cards);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "読み込めませんでした");
+    }
+  };
 
   // データベースの読み取りを節約するため、開いただけ・入力しただけでは読み込まない。「検索」を押したときだけ1回100件まで読む
   const load = useCallback(
@@ -453,6 +445,12 @@ function CardList() {
       {cards?.map((c) => (
         <CardRow key={c.id} card={c} open={open === c.id} onToggle={() => setOpen(open === c.id ? null : c.id)} onChanged={() => void load()} />
       ))}
+      {cards && cards.some((c) => c.status !== "DELETED") && (
+        <Button variant="outline" onClick={() => void printShown()} disabled={busy}>
+          <Printer /> 表示中のカード({Math.min(100, cards.filter((c) => c.status !== "DELETED").length)}枚)のQRを印刷
+        </Button>
+      )}
+      {printCards && <PrintSheet cards={printCards} title="カードのQR" onClose={() => setPrintCards(null)} />}
       {next !== null && (
         <Button variant="outline" onClick={() => void load(next)} disabled={busy}>
           {busy ? "読み込み中…" : "さらに表示"}
@@ -557,6 +555,20 @@ function CardRow({ card: c, open, onToggle, onChanged }: { card: CardDto; open: 
 
           {mode === null && c.status !== "DELETED" && (
             <div className="flex flex-wrap gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={act.pending}
+                onClick={() =>
+                  void act.run(async () => {
+                    const r = await api<{ cards: IssuedCard[]; missing: string[] }>("/cards/qr-batch", { body: { ids: [c.id] } });
+                    if (r.cards.length === 0) throw new Error("このカードのQRは再表示できません(保存される前に発行されたカードです)");
+                    setRegen(r.cards[0]!);
+                  })
+                }
+              >
+                <QrCode className="!size-4" /> QR表示・印刷
+              </Button>
               {c.status === "ACTIVE" && (
                 <Button size="sm" variant="outline" onClick={() => setMode("suspend")}>
                   <Ban className="!size-4" /> 一時停止
@@ -731,7 +743,7 @@ function CardRow({ card: c, open, onToggle, onChanged }: { card: CardDto; open: 
           <ErrorText message={act.error} />
         </div>
       )}
-      {regen && <PrintSheet cards={[regen]} title="作り直したカードのQR" onClose={() => setRegen(null)} />}
+      {regen && <PrintSheet cards={[regen]} title={`カード ${regen.displayNo} のQR`} onClose={() => setRegen(null)} />}
     </Card>
   );
 }

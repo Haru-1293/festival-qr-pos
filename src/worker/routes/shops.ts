@@ -1,3 +1,4 @@
+import { vaultSecret } from "../lib/vault";
 import { zv as zValidator } from "../lib/validate";
 import { Hono } from "hono";
 import { z } from "zod";
@@ -7,7 +8,7 @@ import type { ReceptionQrIssued, ShopNameHistoryItem, ShopOptions } from "@share
 import { renameStmts } from "../lib/shopname";
 import { hashPassword } from "../lib/crypto";
 import { badRequest, conflict, notFound } from "../lib/errors";
-import { buildLoginQrIssue, createStaffUser, getUserBasic, isUniqueViolation, listUsers } from "../lib/users";
+import { readLoginQr, buildLoginQrIssue, createStaffUser, getUserBasic, isUniqueViolation, listUsers } from "../lib/users";
 import { nicknameSchema, passwordSchema, staffLoginIdSchema } from "../lib/validation";
 import { assertShopAccess, requireAuth, requireRole } from "../middleware/auth";
 
@@ -203,11 +204,24 @@ export const shopRoutes = new Hono<AppEnv>()
       const target = await getUserBasic(c.env.DB, userId);
       if (!target || target.role !== "CLERK" || target.shop_id !== shopId) throw notFound("店員が見つかりません");
       if (target.status !== "ACTIVE") throw badRequest("停止中の店員にはQRを発行できません");
-      const qr = await buildLoginQrIssue(c.env.DB, auth, userId, "CLERK", c.req.valid("json").reason ?? "再発行");
+      const qr = await buildLoginQrIssue(c.env.DB, auth, userId, "CLERK", c.req.valid("json").reason ?? "再発行", vaultSecret(c.env));
       await c.env.DB.batch(qr.stmts);
       return c.json({ userId, token: qr.token } satisfies ReceptionQrIssued);
     },
   )
+  // 店員の有効なログインQRを何度でも表示する。閲覧は監査ログに残る
+  .get("/:shopId/staff/:userId/qr", staffParam, async (c) => {
+    const auth = requireAuth(c);
+    const { shopId, userId } = c.req.valid("param");
+    assertShopAccess(auth, shopId);
+    const target = await getUserBasic(c.env.DB, userId);
+    if (!target || target.role !== "CLERK" || target.shop_id !== shopId) throw notFound("店員が見つかりません");
+    const qr = await readLoginQr(c.env.DB, vaultSecret(c.env), userId);
+    if (!qr) throw notFound("このQRは再表示できません(保存される前に発行されたQRです)。「QR再発行」で作り直してください", "QR_NOT_STORED");
+    await c.env.DB.batch([auditStmt(c.env.DB, { actor: auth, action: "login_qr.view", targetType: "user", targetId: userId })]);
+    c.header("Cache-Control", "no-store");
+    return c.json({ userId, token: qr.token, issuedAt: qr.issuedAt });
+  })
   // 店員のログインQRの即時失効(再発行はしない)
   .post(
     "/:shopId/staff/:userId/qr/revoke",

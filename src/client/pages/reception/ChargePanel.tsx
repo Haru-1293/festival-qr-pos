@@ -8,6 +8,7 @@ import { ErrorText } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ApiRequestError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -327,44 +328,57 @@ export function ChargePanel({ onChanged }: { onChanged: () => void }) {
 
             <ErrorText message={localError ?? op.error} />
 
-            {!confirming ? (
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={reset}>
-                  やめる
-                </Button>
-                <Button className="flex-1" size="lg" onClick={goConfirm} disabled={mode === "payout" && w.balance <= 0}>
-                  {mode === "charge" ? (
-                    "内容を確認する"
-                  ) : (
-                    <>
-                      <HandCoins /> 内容を確認する
-                    </>
-                  )}
-                </Button>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-3 rounded-xl border-2 border-primary p-3">
-                <p className="text-base font-bold">{mode === "charge" ? `${yen(cashNum)} を受け取りましたか?` : `${payoutCash === null ? "" : yen(payoutCash)} をお渡しします`}</p>
-                <p className="text-sm text-muted-foreground">{mode === "charge" ? `${money(units ?? 0)} をチャージします。` : "確定すると残高が0になります。確定後に現金をお渡しください。"}</p>
-                {mode === "payout" && lookup.card && (
-                  <div className="flex flex-col gap-2 rounded-lg bg-muted p-3">
-                    <p className="text-center text-sm font-semibold">現金をお渡しするため、カードのPIN(4桁)を入力してもらってください</p>
-                    <PinPad value={pin} onChange={setPin} disabled={op.pending} />
-                  </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={reset}>
+                やめる
+              </Button>
+              <Button className="flex-1" size="lg" onClick={goConfirm} disabled={mode === "payout" && w.balance <= 0}>
+                {mode === "charge" ? (
+                  "内容を確認する"
+                ) : (
+                  <>
+                    <HandCoins /> 内容を確認する
+                  </>
                 )}
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => setConfirming(false)} disabled={op.pending}>
-                    戻る
-                  </Button>
-                  <Button className="flex-1" size="lg" onClick={submit} disabled={op.pending || (mode === "payout" && !!lookup.card && pin.length !== 4)}>
-                    {op.pending ? "処理中…" : mode === "charge" ? "チャージを確定" : "払い戻しを確定"}
-                  </Button>
-                </div>
-              </div>
-            )}
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
+
+      {/* 確認はポップアップで出す(金額の取り違いを防ぐため、画面の操作を止めて確認してもらう) */}
+      <Dialog
+        open={confirming}
+        onOpenChange={(o) => {
+          if (!o && !op.pending) setConfirming(false);
+        }}
+      >
+        <DialogContent hideClose={op.pending} onInteractOutside={(e) => e.preventDefault()}>
+          <DialogTitle>{mode === "charge" ? `${yen(cashNum)} を受け取りましたか?` : `${payoutCash === null ? "" : yen(payoutCash)} をお渡しします`}</DialogTitle>
+          <DialogDescription>{mode === "charge" ? `${money(units ?? 0)} をチャージします。` : "確定すると残高が0になります。確定後に現金をお渡しください。"}</DialogDescription>
+          <div className="rounded-lg bg-muted px-3 py-2 text-sm">
+            <p>
+              {w.nickname ?? "お客様"} さん ・ 現在の残高 <b>{money(w.balance)}</b>
+            </p>
+            {mode === "charge" && units !== null && <p className="text-muted-foreground">チャージ後の残高 {money(w.balance + units)}</p>}
+          </div>
+          {mode === "payout" && lookup.card && (
+            <div className="flex flex-col gap-2 rounded-lg bg-muted p-3">
+              <p className="text-center text-sm font-semibold">現金をお渡しするため、カードのPIN(4桁)を入力してもらってください</p>
+              <PinPad value={pin} onChange={setPin} disabled={op.pending} />
+            </div>
+          )}
+          <ErrorText message={op.error} />
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setConfirming(false)} disabled={op.pending}>
+              戻る
+            </Button>
+            <Button className="flex-1" size="lg" onClick={submit} disabled={op.pending || (mode === "payout" && !!lookup.card && pin.length !== 4)}>
+              {op.pending ? "処理中…" : mode === "charge" ? "チャージを確定" : "払い戻しを確定"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

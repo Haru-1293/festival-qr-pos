@@ -21,6 +21,7 @@ import { emergencyStop } from "./lib/emergency";
 import { refundRoutes } from "./routes/refunds";
 import { receptionRoutes } from "./routes/reception";
 import { settingsRoutes } from "./routes/settings";
+import { printTemplateRoutes } from "./routes/printTemplates";
 import { systemRoutes } from "./routes/system";
 import { setupRoutes } from "./routes/setup";
 import { shopRoutes } from "./routes/shops";
@@ -46,6 +47,7 @@ const api = new Hono<AppEnv>()
   .route("/auth", authRoutes)
   .route("/setup", setupRoutes)
   .route("/settings", settingsRoutes)
+  .route("/print-templates", printTemplateRoutes)
   .route("/admin/system", systemRoutes)
   .route("/admin", adminRoutes)
   .route("/shops", shopRoutes)

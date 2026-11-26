@@ -167,6 +167,12 @@ export function AdminUsers() {
       await load();
     });
   };
+  // 保存してあるQRを、何度でも表示・印刷できる(閲覧は監査ログに残る)
+  const showQr = (u: UserDto) =>
+    void row.run(async () => {
+      const r = await api<{ token: string }>(`/admin/users/${u.id}/login-qr`);
+      setQr({ issued: { userId: u.id, token: r.token }, nickname: u.nickname, loginId: u.loginId, role: u.role, shopName: u.shopName });
+    });
   const revokeQr = async (u: UserDto) => {
     const reason = await prompt(`${u.nickname} さんのログインQRを失効します。理由を入力してください(例: 紛失)`, { title: "ログインQRの失効", required: true, action: "失効する" });
     if (!reason) return;
@@ -311,6 +317,11 @@ export function AdminUsers() {
                     <Button size="sm" variant="outline" onClick={() => setCredentials(u)} disabled={row.pending}>
                       <KeyRound className="!size-4" /> {u.loginId ? "ID・パスワード変更" : "ID・パスワード設定"}
                     </Button>
+                    {u.loginQrIssuedAt && u.status === "ACTIVE" && (
+                      <Button size="sm" variant="outline" onClick={() => showQr(u)} disabled={row.pending}>
+                        <QrCode className="!size-4" /> QR表示・印刷
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => reissueQr(u)} disabled={row.pending}>
                       <QrCode className="!size-4" /> QR再発行
                     </Button>

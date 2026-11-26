@@ -4,6 +4,7 @@ import type { CardDto, IssuedCard } from "@shared/api";
 import type { AppEnv } from "../env";
 import { auditStmt } from "../lib/audit";
 import { getExpiryPolicy, maxExpiry, resolveExpiry } from "../lib/expiry";
+import { openText, sealText, vaultSecret } from "../lib/vault";
 import { capByGlobal } from "../lib/globalExpiry";
 import { CARD_SELECT, type CardRow, cardUsableSql, newCardToken, toCardDto } from "../lib/cards";
 import { hashPin, sha256Hex } from "../lib/crypto";
@@ -97,6 +98,7 @@ export const cardRoutes = new Hono<AppEnv>()
         const start = (last?.n ?? 0) + 1;
         const issued: IssuedCard[] = [];
         const stmts: D1PreparedStatement[] = [];
+        const secret = vaultSecret(c.env);
         for (let i = 0; i < b.count; i++) {
           const { token, hash } = await newCardToken();
           const id = newId(now);
@@ -105,8 +107,8 @@ export const cardRoutes = new Hono<AppEnv>()
           stmts.push(
             db.prepare("INSERT INTO token_tombstones (token_hash, kind, created_at) VALUES (?, 'CARD_QR', ?)").bind(hash, now),
             db
-              .prepare(`INSERT INTO cards (id, display_no, qr_token_hash, status, expires_at, issue_batch, memo, issued_at, issued_by) VALUES (?, ?, ?, 'ISSUED', ?, ?, ?, ?, ?)`)
-              .bind(id, displayNo, hash, expiresAt, b.batch || null, b.memo || null, now, auth.userId),
+              .prepare(`INSERT INTO cards (id, display_no, qr_token_hash, status, expires_at, issue_batch, memo, issued_at, issued_by, qr_enc) VALUES (?, ?, ?, 'ISSUED', ?, ?, ?, ?, ?, ?)`)
+              .bind(id, displayNo, hash, expiresAt, b.batch || null, b.memo || null, now, auth.userId, await sealText(secret, token)),
           );
         }
         stmts.push(auditStmt(db, { actor: auth, action: "card.issue", targetType: "card", targetId: issued[0].id, after: { count: b.count, first: issued[0].displayNo, last: issued[issued.length - 1].displayNo, batch: b.batch ?? null } }));
@@ -231,6 +233,30 @@ export const cardRoutes = new Hono<AppEnv>()
     return c.json({ ok: true });
   })
 
+  // カードのQRを何度でも表示する(印刷のやり直し・保存ミスのため)。複数枚まとめて取得でき、閲覧は監査ログに残る
+  .post("/qr-batch", zv("json", z.object({ ids: z.array(id26).min(1).max(100) })), async (c) => {
+    const auth = requireAuth(c);
+    const { ids } = c.req.valid("json");
+    const db = c.env.DB;
+    const secret = vaultSecret(c.env);
+    const { results } = await db
+      .prepare(`SELECT id, display_no, qr_enc, expires_at FROM cards WHERE id IN (${ids.map(() => "?").join(",")}) AND status <> 'DELETED' ORDER BY display_no`)
+      .bind(...ids)
+      .all<{ id: string; display_no: string; qr_enc: string | null; expires_at: number | null }>();
+    const cards: IssuedCard[] = [];
+    const missing: string[] = [];
+    for (const r of results) {
+      const token = await openText(secret, r.qr_enc);
+      if (token) cards.push({ id: r.id, displayNo: r.display_no, token, expiresAt: r.expires_at ?? 0 });
+      else missing.push(r.display_no);
+    }
+    if (cards.length > 0) {
+      await db.batch([auditStmt(db, { actor: auth, action: "card_qr.view", targetType: "card", targetId: cards[0].id, after: { count: cards.length, first: cards[0].displayNo, last: cards[cards.length - 1].displayNo } })]);
+    }
+    c.header("Cache-Control", "no-store");
+    return c.json({ cards, missing });
+  })
+
   // 未有効化カードの印刷物を紛失したとき等: 古いQRを永久に失効させ、新しいQRを作る(古いトークンは二度と使えない)
   .post("/:id/regenerate", idParam, async (c) => {
     const auth = requireAuth(c);
@@ -244,7 +270,7 @@ export const cardRoutes = new Hono<AppEnv>()
     const res = await db.batch([
       db.prepare("INSERT INTO token_tombstones (token_hash, kind, created_at) VALUES (?, 'CARD_QR', ?)").bind(hash, now),
       db.prepare("UPDATE token_tombstones SET retired_at = ? WHERE token_hash = ?").bind(now, old?.qr_token_hash ?? ""),
-      db.prepare("UPDATE cards SET qr_token_hash = ? WHERE id = ? AND status = 'ISSUED'").bind(hash, id),
+      db.prepare("UPDATE cards SET qr_token_hash = ?, qr_enc = ? WHERE id = ? AND status = 'ISSUED'").bind(hash, await sealText(vaultSecret(c.env), token), id),
       auditStmt(db, { actor: auth, action: "card.regenerate", targetType: "card", targetId: id, after: { displayNo: card.display_no } }),
     ]);
     if ((res[2].meta.changes ?? 0) !== 1) throw conflict("カードの状態が変わりました", "CARD_STATE");
@@ -291,7 +317,7 @@ export const cardRoutes = new Hono<AppEnv>()
       // ① 旧カードを削除(QR・PINは失効。削除済みでないときだけ)。続く文は「①が成功したときだけ」動く
       stmts.push(
         db
-          .prepare("UPDATE cards SET status = 'DELETED', deleted_at = ?, deleted_by = ?, delete_reason = ?, qr_token_hash = NULL, pin_hash = NULL WHERE id = ? AND status <> 'DELETED'")
+          .prepare("UPDATE cards SET status = 'DELETED', deleted_at = ?, deleted_by = ?, delete_reason = ?, qr_token_hash = NULL, qr_enc = NULL, pin_hash = NULL WHERE id = ? AND status <> 'DELETED'")
           .bind(now, auth.userId, b.reason, id),
         db.prepare("UPDATE token_tombstones SET retired_at = ? WHERE token_hash = ?").bind(now, old?.qr_token_hash ?? ""),
       );

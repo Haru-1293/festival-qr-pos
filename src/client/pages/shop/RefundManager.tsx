@@ -8,6 +8,7 @@ import { ErrorText, Field } from "@/components/Shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ApiRequestError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -411,12 +412,21 @@ export function RefundManager({ shopId }: { shopId: string }) {
             ))}
           </div>
 
-          {confirming ? (
-            <Card className="border-primary">
-              <CardHeader>
-                <CardTitle>この内容で返金します</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-1 text-sm">
+          <ErrorText message={op.error} />
+          <Button size="lg" disabled={!valid} onClick={() => setConfirming(true)}>
+            {amount > 0 ? `${money(amount)} を返金する(確認へ)` : "返金する商品を選んでください"}
+          </Button>
+          {amount > detail.refundable && <p className="text-xs font-semibold text-destructive">残り返金可能額を超えています</p>}
+          {/* 確認はポップアップで出す */}
+          <Dialog
+            open={confirming}
+            onOpenChange={(o) => {
+              if (!o && !op.pending) setConfirming(false);
+            }}
+          >
+            <DialogContent hideClose={op.pending} onInteractOutside={(e) => e.preventDefault()}>
+              <DialogTitle>この内容で返金します</DialogTitle>
+              <div className="flex flex-col gap-1 text-sm">
                 <p>
                   元の取引 {detail.orderNo}(支払い {money(detail.total)})
                 </p>
@@ -436,26 +446,18 @@ export function RefundManager({ shopId }: { shopId: string }) {
                 <p className="text-muted-foreground">
                   理由: {reason} ・ 操作者: {me?.user.nickname}
                 </p>
-                <ErrorText message={op.error} />
-                <div className="mt-2 flex gap-2">
-                  <Button variant="outline" className="flex-1" onClick={() => setConfirming(false)} disabled={op.pending}>
-                    戻る
-                  </Button>
-                  <Button className="flex-1" onClick={submit} disabled={op.pending}>
-                    {op.pending ? "返金中…" : "返金する"}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <>
+              </div>
               <ErrorText message={op.error} />
-              <Button size="lg" disabled={!valid} onClick={() => setConfirming(true)}>
-                {amount > 0 ? `${money(amount)} を返金する(確認へ)` : "返金する商品を選んでください"}
-              </Button>
-              {amount > detail.refundable && <p className="text-xs font-semibold text-destructive">残り返金可能額を超えています</p>}
-            </>
-          )}
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1" onClick={() => setConfirming(false)} disabled={op.pending}>
+                  戻る
+                </Button>
+                <Button className="flex-1" onClick={submit} disabled={op.pending}>
+                  {op.pending ? "返金中…" : "返金する"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </>
       ) : (
         <p className="rounded-xl bg-card px-3 py-3 text-sm text-muted-foreground">この注文はすべて返金済みです。</p>
