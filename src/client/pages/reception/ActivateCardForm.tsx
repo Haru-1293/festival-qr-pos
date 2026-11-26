@@ -1,6 +1,6 @@
 import { CircleCheck, CreditCard } from "lucide-react";
-import { useState } from "react";
-import type { CashOpResult, LookupResponse } from "@shared/api";
+import { useEffect, useState } from "react";
+import type { CashOpResult, LookupResponse, PinMode } from "@shared/api";
 import { cashToUnits } from "@shared/currency";
 import { PinPad } from "@/components/PinPad";
 import { ErrorText } from "@/components/Shell";
@@ -37,6 +37,18 @@ export function ActivateCardForm({ token, onCancel, onChanged, onContinue }: { t
   const [res, setRes] = useState<ActivateResponse | null>(null);
   const op = useAction();
   const reqId = useRequestId();
+  // PINの決め方(発行時に設定済みか、お客様が決めるか)。読み込むまでは入力欄を出さない
+  const [pinMode, setPinMode] = useState<PinMode | null>(null);
+  const [infoError, setInfoError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    api<{ pinMode: PinMode }>("/reception/card-info", { body: { token } })
+      .then((r) => alive && setPinMode(r.pinMode))
+      .catch((e) => alive && setInfoError(e instanceof Error ? e.message : "カードの情報を読み込めませんでした"));
+    return () => {
+      alive = false;
+    };
+  }, [token]);
   const yenPerUnit = settings.currency.yenPerUnit;
 
   const cashNum = cash === "" ? 0 : Number(cash);
@@ -45,8 +57,10 @@ export function ActivateCardForm({ token, onCancel, onChanged, onContinue }: { t
   const goConfirm = () => {
     setLocalError(null);
     if (!nickname.trim()) return setLocalError("ニックネームを入力してください");
-    if (!/^\d{4}$/.test(pin)) return setLocalError("PINは数字4桁で入力してください");
-    if (pin !== pin2) return setLocalError("PINが一致しません。もう一度入力してください");
+    if (pinMode === "USER") {
+      if (!/^\d{4}$/.test(pin)) return setLocalError("PINは数字4桁で入力してください");
+      if (pin !== pin2) return setLocalError("PINが一致しません。もう一度入力してください");
+    }
     if (cashNum > 0 && units === null) return setLocalError(`${yen(cashNum)}は${short}に換算できません(1${short}=${yenPerUnit}円)`);
     setConfirming(true);
   };
@@ -54,7 +68,7 @@ export function ActivateCardForm({ token, onCancel, onChanged, onContinue }: { t
   const submit = () =>
     void op.run(async () => {
       const r = await api<ActivateResponse>("/reception/activate-card", {
-        body: { token, nickname: nickname.trim(), pin, cashAmount: cashNum, requestId: reqId.get() },
+        body: { token, nickname: nickname.trim(), ...(pinMode === "USER" ? { pin } : {}), cashAmount: cashNum, requestId: reqId.get() },
       });
       setPin("");
       setPin2("");
@@ -89,7 +103,7 @@ export function ActivateCardForm({ token, onCancel, onChanged, onContinue }: { t
               カードは有効化できましたが、チャージはできませんでした({res.chargeError})。現金はお返しして、下の「チャージに進む」からやり直してください。
             </div>
           )}
-          <p className="rounded-lg bg-muted px-3 py-2 text-sm">PINはお客様ご本人が覚えておいてください。現金の払い戻しのときに必要です。</p>
+          <p className="rounded-lg bg-muted px-3 py-2 text-sm">PINは現金の払い戻しのときに必要です。お客様ご本人が覚えておいてください(発行時に決めたPINはカードに印字されています)。</p>
           {res.chargeError && (
             <Button size="lg" variant="outline" onClick={() => onContinue(res.lookup)}>
               チャージに進む
@@ -111,17 +125,20 @@ export function ActivateCardForm({ token, onCancel, onChanged, onContinue }: { t
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">このカードはまだ有効化されていません。お客様にニックネームとPIN(数字4桁)を決めてもらい、有効化します。チャージも同時にできます。</p>
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">このカードはまだ有効化されていません。{pinMode === "ISSUE" ? "ニックネームを決めてもらい、有効化します(PINはカードに印字されています)。" : "お客様にニックネームとPIN(数字4桁)を決めてもらい、有効化します。"}チャージも同時にできます。</p>
+        {infoError && <ErrorText message={infoError} />}
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">ニックネーム(30文字まで)</span>
           <Input value={nickname} maxLength={30} onChange={(e) => setNickname(e.target.value)} placeholder="例: たろう" disabled={op.pending} />
         </label>
-        <div className="flex flex-col gap-2">
-          <span className="text-sm font-medium">PIN(数字4桁・お客様に入力してもらう)</span>
-          <PinPad value={pin} onChange={setPin} disabled={op.pending} />
-          <span className="text-sm font-medium">もう一度PINを入力</span>
-          <PinPad value={pin2} onChange={setPin2} disabled={op.pending} />
-        </div>
+        {pinMode === "USER" && (
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium">PIN(数字4桁・お客様に入力してもらい、カードの記入欄にも書いてもらいます)</span>
+            <PinPad value={pin} onChange={setPin} disabled={op.pending} />
+            <span className="text-sm font-medium">もう一度PINを入力</span>
+            <PinPad value={pin2} onChange={setPin2} disabled={op.pending} />
+          </div>
+        )}
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium">同時にチャージする現金(円・なしでもOK)</span>
           <Input inputMode="numeric" pattern="[0-9]*" value={cash} disabled={op.pending} onChange={(e) => setCash(e.target.value.replace(/[^0-9]/g, ""))} placeholder="例: 1000" className="h-12 text-xl font-bold" />
@@ -144,7 +161,7 @@ export function ActivateCardForm({ token, onCancel, onChanged, onContinue }: { t
           <Button variant="outline" onClick={onCancel} disabled={op.pending}>
             やめる
           </Button>
-          <Button className="flex-1" size="lg" onClick={goConfirm} disabled={op.pending}>
+          <Button className="flex-1" size="lg" onClick={goConfirm} disabled={op.pending || pinMode === null}>
             内容を確認する
           </Button>
         </div>
@@ -163,7 +180,7 @@ export function ActivateCardForm({ token, onCancel, onChanged, onContinue }: { t
             <p>
               ニックネーム: <b>{nickname.trim()}</b>
             </p>
-            <p className="text-muted-foreground">PIN: ●●●●(お客様がご確認済み)</p>
+            <p className="text-muted-foreground">PIN: {pinMode === "ISSUE" ? "カードに印字のとおり" : "●●●●(お客様がご確認済み)"}</p>
           </div>
           <ErrorText message={op.error} />
           <div className="flex gap-2">

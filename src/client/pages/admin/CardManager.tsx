@@ -1,6 +1,7 @@
 import { Ban, KeyRound, Play, Printer, QrCode, RefreshCw, ScanLine, Search, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import type { CardDto, CardStatus, ExpiryPolicy, IssuedCard } from "@shared/api";
+import type { CardDto, CardStatus, ExpiryPolicy, IssuedCard, PinMode } from "@shared/api";
+import { TemplateManager } from "@/components/print/TemplateManager";
 import { PrintSheet as PrintSheetBase } from "@/components/print/PrintSheet";
 import { QrScanner, scannerSupported } from "@/components/QrScanner";
 import { ErrorText, Field } from "@/components/Shell";
@@ -57,13 +58,14 @@ const STATUS_VARIANT: Record<CardStatus, "default" | "muted" | "warning" | "dest
   DELETED: "muted",
 };
 
-type Sub = "list" | "issue" | "activate";
+type Sub = "list" | "design" | "issue" | "activate";
 
 /** 物理QRカードの管理(全体管理者): 発行・印刷・有効化・一覧・停止・PIN再設定・削除・再発行 */
 export function CardManager() {
   const [sub, setSub] = useState<Sub>("list");
   const SUBS: { id: Sub; label: string }[] = [
     { id: "list", label: "一覧" },
+    { id: "design", label: "デザイン" },
     { id: "issue", label: "発行・印刷" },
     { id: "activate", label: "有効化" },
   ];
@@ -79,6 +81,7 @@ export function CardManager() {
         </TabsList>
       </Tabs>
       {sub === "list" && <CardList />}
+      {sub === "design" && <TemplateManager />}
       {sub === "issue" && <IssueCards />}
       {sub === "activate" && <ActivateCard onDone={() => setSub("list")} />}
     </div>
@@ -94,6 +97,7 @@ function IssueCards() {
   const [expiryEdit, setExpiry] = useState<string | null>(null);
   const expiry = expiryEdit ?? defaultExpiry;
   const [issued, setIssued] = useState<IssuedCard[] | null>(null);
+  const [pinMode, setPinMode] = useState<PinMode>("USER");
   const act = useAction();
 
   const submit = (e: FormEvent) => {
@@ -105,6 +109,7 @@ function IssueCards() {
           batch: batch.trim() || undefined,
           memo: memo.trim() || undefined,
           expiresAt: endOfDay(expiry),
+          pinMode,
         },
       });
       setIssued(r.cards);
@@ -117,7 +122,7 @@ function IssueCards() {
         <CardHeader>
           <CardTitle>カードを発行</CardTitle>
           <CardDescription>
-            発行したカードは「未有効化」の在庫になります(ニックネーム・PIN・残高なし)。発行後にQRを印刷できます。QRは暗号化して保存されるので、カード一覧の「QR表示・印刷」から何度でも表示・印刷できます。
+            発行したカードは「未有効化」の在庫になります(ニックネーム・PIN・残高なし)。発行後にQRを印刷できます(印刷デザインは、発行の前に「デザイン」タブで作っておけます)。QRは暗号化して保存されるので、カード一覧の「QR表示・印刷」から何度でも表示・印刷できます。
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -130,6 +135,17 @@ function IssueCards() {
             </Field>
             <Field label="メモ(任意)">
               <Input value={memo} onChange={(e) => setMemo(e.target.value)} maxLength={200} />
+            </Field>
+            <Field label="PINの決め方" hint={pinMode === "ISSUE" ? "発行時にランダムな4桁を決め、カードに印字します。有効化のときにPINの入力は要りません" : "有効化のときに、お客様が受付でPINを入力します。カードにはPINの記入欄を印刷します"}>
+              <Select value={pinMode} onValueChange={(v) => setPinMode(v as PinMode)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="USER">有効化のとき、お客様が決める(カードに記入欄)</SelectItem>
+                  <SelectItem value="ISSUE">発行時にランダムな4桁を設定(カードに印字)</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
             <Field label="有効期限(発行から6か月以内)">
               <DatePicker value={expiry} min={toDateInput(Date.now() + DAY)} max={toDateInput(Date.now() + 183 * DAY)} onChange={setExpiry} />
@@ -155,7 +171,7 @@ function PrintSheet({ cards, title, onClose, fresh }: { cards: IssuedCard[]; tit
       title={title}
       canEdit
       onClose={onClose}
-      items={cards.map((c) => ({ qr: c.token, displayNo: c.displayNo, expiry: c.expiresAt > 0 ? toDateInput(c.expiresAt) : undefined, festival: settings.festivalName }))}
+      items={cards.map((c) => ({ qr: c.token, displayNo: c.displayNo, pin: c.pin ?? undefined, pinBlank: c.pinMode === "USER", expiry: c.expiresAt > 0 ? toDateInput(c.expiresAt) : undefined, festival: settings.festivalName }))}
       notice={
         <p className="rounded-lg bg-amber-100 px-3 py-2 text-sm font-semibold text-amber-900">
           {fresh ? "発行しました。" : ""}QRは暗号化して保存されています。カードの一覧の「QR表示・印刷」から、あとで何度でも同じQRを表示・印刷できます(閲覧は記録されます)。
@@ -196,17 +212,18 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!card) return;
-    if (pin !== pin2) return void act.run(async () => Promise.reject(new Error("PINと確認入力が一致しません")));
+    const issuePin = card.pinMode === "ISSUE";
+    if (!issuePin && pin !== pin2) return void act.run(async () => Promise.reject(new Error("PINと確認入力が一致しません")));
     void act.run(async () => {
       const r = await api<{ card: CardDto }>(`/cards/${card.id}/activate`, {
         body: {
           nickname: nickname.trim(),
-          pin,
+          ...(issuePin ? {} : { pin }),
           memo: memo.trim() || undefined,
           expiresAt: endOfDay(expiry),
         },
       });
-      setDone({ card: r.card, pin });
+      setDone({ card: r.card, pin: issuePin ? "" : pin });
     });
   };
 
@@ -232,8 +249,14 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
         <CardContent className="flex flex-col gap-3">
           <div className="rounded-xl bg-secondary p-4 text-center">
             <p className="text-sm">{done.card.nickname} さん</p>
-            <p className="mt-1 text-xs text-muted-foreground">PIN(この画面を閉じると表示できません)</p>
-            <p className="font-mono text-4xl font-extrabold tracking-[0.4em]">{done.pin}</p>
+            {done.pin ? (
+              <>
+                <p className="mt-1 text-xs text-muted-foreground">PIN(この画面を閉じると表示できません)</p>
+                <p className="font-mono text-4xl font-extrabold tracking-[0.4em]">{done.pin}</p>
+              </>
+            ) : (
+              <p className="mt-1 text-sm font-semibold">PINは、カードに印字されている4桁です</p>
+            )}
           </div>
           <p className="text-sm text-muted-foreground">
             PINは本人にだけ伝えてください。残高は0です。チャージは受付でこのカードのQRを読み取って行います。有効期限 {formatDateTime(done.card.expiresAt ?? 0)}
@@ -312,6 +335,8 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
             <Field label="ニックネーム(利用者の呼び名)">
               <Input value={nickname} onChange={(e) => setNickname(e.target.value)} maxLength={30} required />
             </Field>
+            {card.pinMode === "ISSUE" && <p className="rounded-lg bg-muted px-3 py-2 text-sm">このカードは発行時にPINを設定済みです(カードに印字されています)。PINの入力は要りません。</p>}
+            {card.pinMode === "USER" && (<>
             <Field label="4桁のPIN">
               <div className="flex gap-2">
                 <Input inputMode="numeric" value={pin} onChange={(e) => setPin(digits4(e.target.value))} maxLength={4} autoComplete="off" required />
@@ -331,6 +356,7 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
             <Field label="PINの確認入力">
               <Input inputMode="numeric" value={pin2} onChange={(e) => setPin2(digits4(e.target.value))} maxLength={4} autoComplete="off" required />
             </Field>
+            </>)}
             <Field label="有効期限(6か月以内)">
               <DatePicker value={expiry} min={toDateInput(Date.now() + DAY)} max={toDateInput(Date.now() + 183 * DAY)} onChange={setExpiry} />
             </Field>
@@ -339,7 +365,7 @@ function ActivateCard({ onDone }: { onDone: () => void }) {
             </Field>
             <ErrorText message={act.error} />
             <div className="flex gap-2">
-              <Button type="submit" className="flex-1" disabled={act.pending || pin.length !== 4 || !nickname.trim()}>
+              <Button type="submit" className="flex-1" disabled={act.pending || (card.pinMode === "USER" && pin.length !== 4) || !nickname.trim()}>
                 {act.pending ? "有効化中…" : `カード ${card.displayNo} を有効化する`}
               </Button>
               <Button type="button" variant="outline" onClick={reset}>

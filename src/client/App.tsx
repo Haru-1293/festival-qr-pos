@@ -119,6 +119,7 @@ const CLERK_NAV: NavItem[] = [
 ];
 const RECEPTION_NAV: NavItem[] = [
   { to: "/reception", label: "チャージ・払い戻し", icon: HandCoins, end: true },
+  { to: "/reception/balance", label: "残高照会", icon: ScanSearch },
   { to: "/reception/cash", label: "現金", icon: Wallet },
 ];
 
@@ -134,11 +135,13 @@ function ReceptionPages() {
   const { pathname } = useLocation();
   const [refreshKey, setRefreshKey] = useState(0);
   const onCash = pathname.startsWith("/reception/cash");
+  const onBalance = pathname.startsWith("/reception/balance");
   return (
     <Page width="md">
-      <div className={onCash ? "hidden" : ""}>
+      <div className={onCash || onBalance ? "hidden" : ""}>
         <ChargePanel onChanged={() => setRefreshKey((k) => k + 1)} />
       </div>
+      {onBalance && <BalanceInquiry />}
       {onCash && <CashPanel refreshKey={refreshKey} onChanged={() => setRefreshKey((k) => k + 1)} />}
     </Page>
   );

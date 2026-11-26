@@ -1,6 +1,6 @@
 import QRCode from "qrcode";
 import { useEffect, useState, type CSSProperties, type PointerEvent } from "react";
-import type { DesignElement, PrintCardData, PrintLayout } from "@shared/printDesign";
+import { IMAGE_BOX_FULL, IMAGE_LAYER, type DesignElement, type PrintCardData, type PrintLayout } from "@shared/printDesign";
 
 /** QRコードの画像(data URL)。余白(クワイエットゾーン)つきで、背景が白になる */
 function useQrSrc(value: string): string | null {
@@ -31,6 +31,8 @@ function textOf(key: string, d: PrintCardData): string {
       return d.shop ?? "";
     case "displayNo":
       return d.displayNo ?? "";
+    case "pin":
+      return d.pin ? `PIN ${d.pin}` : d.pinBlank ? "PIN □□□□" : "";
     case "expiry":
       return d.expiry ? `有効期限 ${d.expiry}` : "";
     default:
@@ -69,33 +71,52 @@ export function PrintCard({
     position: "relative",
     overflow: "hidden",
     backgroundColor: layout.bg,
-    backgroundImage: image ? `url(${image})` : undefined,
-    backgroundSize: layout.fit,
-    backgroundPosition: "center",
-    backgroundRepeat: "no-repeat",
     WebkitPrintColorAdjust: "exact",
     printColorAdjust: "exact",
     breakInside: "avoid",
     color: "#000",
     flexShrink: 0,
   };
+  const box = layout.imageBox ?? IMAGE_BOX_FULL;
   const wrap = (el: DesignElement): CSSProperties => ({
     position: "absolute",
     left: `${el.x}%`,
     top: `${el.y}%`,
     width: `${el.w}%`,
-    outline: editing && selectedKey === el.key ? "0.4cqw solid #06a850" : editing ? "0.2cqw dashed rgba(0,0,0,0.35)" : undefined,
+    outline: editing && selectedKey === el.key ? "0.3cqw solid #06a850" : editing ? "0.2cqw dashed rgba(0,0,0,0.35)" : undefined,
     cursor: editing ? "move" : undefined,
     touchAction: editing ? "none" : undefined,
     userSelect: editing ? "none" : undefined,
   });
   return (
-    <div style={style} className={className}>
+    <div style={style} className={className} data-card-root>
+      {image && (
+        <img
+          src={image}
+          alt=""
+          draggable={false}
+          data-key={IMAGE_LAYER}
+          onPointerDown={onElementPointerDown ? (e) => onElementPointerDown(IMAGE_LAYER, e) : undefined}
+          style={{
+            position: "absolute",
+            left: `${box.x}%`,
+            top: `${box.y}%`,
+            width: `${box.w}%`,
+            height: `${box.h}%`,
+            objectFit: layout.fit,
+            maxWidth: "none",
+            outline: editing && selectedKey === IMAGE_LAYER ? "0.3cqw solid #06a850" : undefined,
+            cursor: editing ? "move" : undefined,
+            touchAction: editing ? "none" : undefined,
+            userSelect: editing ? "none" : undefined,
+          }}
+        />
+      )}
       {layout.elements.map((el) => {
         if (!el.visible) return null;
         if (el.key === "qr") {
           return (
-            <div key={el.key} style={{ ...wrap(el), aspectRatio: "1", background: "#fff" }} onPointerDown={onElementPointerDown ? (e) => onElementPointerDown(el.key, e) : undefined}>
+            <div key={el.key} data-key={el.key} style={{ ...wrap(el), aspectRatio: "1", background: "#fff" }} onPointerDown={onElementPointerDown ? (e) => onElementPointerDown(el.key, e) : undefined}>
               {qr && <img src={qr} alt="QRコード" draggable={false} style={{ width: "100%", height: "100%", display: "block" }} />}
             </div>
           );
@@ -105,6 +126,7 @@ export function PrintCard({
         return (
           <div
             key={el.key}
+            data-key={el.key}
             onPointerDown={onElementPointerDown ? (e) => onElementPointerDown(el.key, e) : undefined}
             style={{
               ...wrap(el),
@@ -113,7 +135,7 @@ export function PrintCard({
               textAlign: el.align,
               color: el.color,
               fontWeight: el.bold ? 800 : 500,
-              fontFamily: el.key === "loginId" || el.key === "displayNo" ? 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace' : undefined,
+              fontFamily: el.key === "loginId" || el.key === "displayNo" || el.key === "pin" ? 'ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace' : undefined,
               overflowWrap: "anywhere",
               minHeight: editing ? `${(el.fontMm / layout.widthMm) * 125}cqw` : undefined,
             }}

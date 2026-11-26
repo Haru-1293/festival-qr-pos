@@ -141,10 +141,18 @@ expect "拒否時は残高不変" 0 "$(myBalance $BOB)"
 
 echo "== 途中回収 =="
 DREQ=$(rid)
-req $R1 POST /api/reception/cash/drop "{\"requestId\":\"$DREQ\",\"amount\":1000,\"note\":\"金庫へ\"}"; check "1000円を途中回収" 201
-req $R1 POST /api/reception/cash/drop "{\"requestId\":\"$DREQ\",\"amount\":1000,\"note\":\"金庫へ\"}"; check "再送" 200; expect "再送フラグ" True "$(jget "['replayed']")"
+req $R1 POST /api/reception/cash/drop "{\"requestId\":\"$DREQ\",\"amount\":30,\"note\":\"金庫へ\"}"; check "30円を途中回収" 201
+req $R1 POST /api/reception/cash/drop "{\"requestId\":\"$DREQ\",\"amount\":30,\"note\":\"金庫へ\"}"; check "再送" 200; expect "再送フラグ" True "$(jget "['replayed']")"
 expect "途中回収は1件だけ" 1 "$(sqlv "SELECT count(*) FROM cash_events WHERE kind='DROP'")"
 req $R1 POST /api/reception/cash/drop "{\"requestId\":\"$(rid)\",\"amount\":0}"; check "0円は拒否" 400
+req $R1 GET /api/reception/summary; HELD=$(jget "['totals']['expected']")
+req $R1 POST /api/reception/cash/drop "{\"requestId\":\"$(rid)\",\"amount\":$((HELD+1))}"; check "手元の現金を超える回収は拒否" 409; expect "コード" DROP_EXCEEDS_CASH "$(jget "['error']['code']")"
+expect "拒否した回収は記録されない" 1 "$(sqlv "SELECT count(*) FROM cash_events WHERE kind='DROP'")"
+expect "拒否した回収は監査に残らない" 1 "$(sqlv "SELECT count(*) FROM audit_logs WHERE action='cash.drop'")"
+DREQ2=$(rid)
+req $R1 POST /api/reception/cash/drop "{\"requestId\":\"$DREQ2\",\"amount\":$HELD}"; check "手元の現金ちょうどまでは回収できる" 201
+req $R1 POST /api/reception/cash/drop "{\"requestId\":\"$DREQ2\",\"amount\":$HELD}"; check "回収後の再送は前回の結果" 200
+req $R1 POST /api/reception/cash/drop "{\"requestId\":\"$(rid)\",\"amount\":1}"; check "手元が0円なら1円も回収できない" 409
 
 echo "== 集計(受付A) =="
 req $R1 GET /api/reception/summary; check "受付Aの集計" 200

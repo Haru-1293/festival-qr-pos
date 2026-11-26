@@ -1,6 +1,7 @@
 import type { AuthContext } from "../env";
 import { hashPin } from "./crypto";
-import { conflict } from "./errors";
+import { badRequest, conflict } from "./errors";
+import { openText } from "./vault";
 import { newId } from "./ids";
 import type { CardRow } from "./cards";
 
@@ -32,7 +33,7 @@ export async function activateCard(
       .bind(walletId, b.expiresAt, now, id),
     db
       .prepare(
-        `UPDATE cards SET status = 'ACTIVE', wallet_id = ?, nickname = ?, pin_hash = ?, expires_at = ?, memo = COALESCE(?, memo), activated_at = ?, activated_by = ?
+        `UPDATE cards SET status = 'ACTIVE', wallet_id = ?, nickname = ?, pin_hash = ?, pin_enc = NULL, expires_at = ?, memo = COALESCE(?, memo), activated_at = ?, activated_by = ?
           WHERE id = ? AND status = 'ISSUED' AND EXISTS (SELECT 1 FROM wallets WHERE id = ?)`,
       )
       .bind(walletId, b.nickname, pinHash, b.expiresAt, b.memo || null, now, actor.userId, id, walletId),
@@ -45,4 +46,18 @@ export async function activateCard(
   ]);
   if ((res[1].meta.changes ?? 0) !== 1) throw conflict("このカードはすでに有効化されています", "CARD_STATE");
   return walletId;
+}
+
+/**
+ * 有効化に使うPINを決める。発行時にPINを設定したカードはその4桁(暗号化保存から復元)、
+ * お客様が決めるカードは入力されたPIN。
+ */
+export async function resolveActivationPin(secret: string | null, card: CardRow, input: string | undefined): Promise<string> {
+  if (card.pin_mode === "ISSUE") {
+    const pin = await openText(secret, card.pin_enc);
+    if (!pin) throw conflict("このカードのPINを取り出せません。カードを作り直してください", "PIN_NOT_STORED");
+    return pin;
+  }
+  if (!input || !/^\d{4}$/.test(input)) throw badRequest("PINは数字4桁で入力してください");
+  return input;
 }

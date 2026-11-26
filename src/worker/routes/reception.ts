@@ -7,7 +7,8 @@ import type { AppEnv, AuthContext } from "../env";
 import { auditStmt, auditStmtIfExists } from "../lib/audit";
 import { loadLedgerResult, loadOpenTotals, loadRecentEvents } from "../lib/cash";
 import { CARD_SELECT, type CardRow, cardUsableSql } from "../lib/cards";
-import { activateCard } from "../lib/cardActivate";
+import { activateCard, resolveActivationPin } from "../lib/cardActivate";
+import { vaultSecret } from "../lib/vault";
 import { checkExpiry, pinSchema } from "./cards";
 import { sha256Hex, verifyPin } from "../lib/crypto";
 import { badRequest, conflict, forbidden, notFound } from "../lib/errors";
@@ -281,6 +282,15 @@ export const receptionRoutes = new Hono<AppEnv>()
     } satisfies LookupResponse);
   })
 
+  // 未有効カードのQRを読み取って、有効化の入力に必要な情報(PINの決め方)を返す。状態は変えない
+  .post("/card-info", zv("json", z.object({ token: z.string().trim().max(100) })), async (c) => {
+    const { token } = c.req.valid("json");
+    if (!CARD_QR_PATTERN.test(token)) throw badRequest("カードのQRではありません", "INVALID_QR");
+    const card = await c.env.DB.prepare(`${CARD_SELECT} WHERE c.qr_token_hash = ?`).bind(await sha256Hex(token)).first<CardRow>();
+    if (!card) throw badRequest("このカードは登録されていないか、無効になっています", "INVALID_QR");
+    return c.json({ displayNo: card.display_no, status: card.status, pinMode: card.pin_mode });
+  })
+
   // 受付でのカード有効化: 未有効のカードを読み取り、ニックネームとPINを設定して使えるようにする。希望すればそのままチャージも行う
   .post(
     "/activate-card",
@@ -289,7 +299,8 @@ export const receptionRoutes = new Hono<AppEnv>()
       z.object({
         token: z.string().trim().max(100),
         nickname: z.string().trim().min(1, "ニックネームを入力してください").max(30, "ニックネームは30文字以内にしてください"),
-        pin: pinSchema,
+        /** お客様が決めるカードのとき必須。発行時にPINを設定したカードでは使わない */
+        pin: pinSchema.optional(),
         /** 同時にチャージする現金(円)。0・なしならチャージしない */
         cashAmount: z.number().int().min(0).max(MAX_CHARGE_YEN, `1回のチャージは${MAX_CHARGE_YEN.toLocaleString()}円までです`).default(0),
         requestId: requestIdSchema,
@@ -327,7 +338,8 @@ export const receptionRoutes = new Hono<AppEnv>()
       }
       const preset = card.expires_at !== null && card.expires_at > now ? card.expires_at : undefined;
       const expiresAt = await checkExpiry(db, preset, now);
-      const walletId = await activateCard(db, c.env, auth, card, { nickname: b.nickname, pin: b.pin, expiresAt });
+      const pin = await resolveActivationPin(vaultSecret(c.env), card, b.pin);
+      const walletId = await activateCard(db, c.env, auth, card, { nickname: b.nickname, pin, expiresAt });
       const lookup = await lookupFor(walletId, card.id);
       if (b.cashAmount === 0) return c.json({ lookup, charge: null, chargeError: null, replayed: false }, 201);
       // 有効化は済んでいる。チャージだけ失敗したときは、その旨を返す(カードは読み取り済みなので、そのままチャージをやり直せる)
@@ -591,26 +603,47 @@ export const receptionRoutes = new Hono<AppEnv>()
       const b = c.req.valid("json");
       const db = c.env.DB;
       const eventId = newId();
+      // 回収できるのは、いま手元にあるはずの現金(未締めのチャージ − 払い戻し − 回収済み ± 訂正)まで。
+      // 判定は挿入と同じ文の中で行い、同時に操作されても超過しない
+      const heldSql = `(SELECT COALESCE(SUM(CASE kind WHEN 'CHARGE' THEN amount WHEN 'PAYOUT' THEN -amount WHEN 'DROP' THEN -amount ELSE amount END), 0)
+                          FROM cash_events WHERE reception_user_id = ? AND closing_id IS NULL)`;
+      const replay = async () => {
+        const ex = await db
+          .prepare("SELECT id, kind, reception_user_id FROM cash_events WHERE request_id = ?")
+          .bind(b.requestId)
+          .first<{ id: string; kind: string; reception_user_id: string }>();
+        if (!ex) return null;
+        if (ex.kind === "DROP" && ex.reception_user_id === auth.userId) return c.json({ eventId: ex.id, replayed: true });
+        throw conflict("このリクエストIDはすでに別の操作で使われています", "REQUEST_ID_REUSED");
+      };
+      let res: D1Result[];
       try {
-        await db.batch([
+        res = await db.batch([
           db
             .prepare(
               `INSERT INTO cash_events (id, reception_user_id, kind, amount, reason, created_at, request_id)
-               VALUES (?, ?, 'DROP', ?, ?, ?, ?)`,
+               SELECT ?, ?, 'DROP', ?, ?, ?, ? WHERE ? <= ${heldSql}`,
             )
-            .bind(eventId, auth.userId, b.amount, b.note ?? null, Date.now(), b.requestId),
-          auditStmt(db, { actor: auth, action: "cash.drop", targetType: "cash_event", targetId: eventId, after: { cashYen: b.amount }, reason: b.note }),
+            .bind(eventId, auth.userId, b.amount, b.note ?? null, Date.now(), b.requestId, b.amount, auth.userId),
+          auditStmtIfExists(
+            db,
+            { actor: auth, action: "cash.drop", targetType: "cash_event", targetId: eventId, after: { cashYen: b.amount }, reason: b.note },
+            "SELECT 1 FROM cash_events WHERE id = ?",
+            [eventId],
+          ),
         ]);
       } catch (e) {
         if (isUnique(e)) {
-          const ex = await db
-            .prepare("SELECT id, kind, reception_user_id FROM cash_events WHERE request_id = ?")
-            .bind(b.requestId)
-            .first<{ id: string; kind: string; reception_user_id: string }>();
-          if (ex && ex.kind === "DROP" && ex.reception_user_id === auth.userId) return c.json({ eventId: ex.id, replayed: true });
-          throw conflict("このリクエストIDはすでに別の操作で使われています", "REQUEST_ID_REUSED");
+          const r = await replay();
+          if (r) return r;
         }
         throw e;
+      }
+      if ((res[0].meta.changes ?? 0) !== 1) {
+        const r = await replay();
+        if (r) return r;
+        const held = await db.prepare(`SELECT ${heldSql} AS h`).bind(auth.userId).first<{ h: number }>();
+        throw conflict(`手元にあるはずの現金(${(held?.h ?? 0).toLocaleString()}円)を超えて回収することはできません`, "DROP_EXCEEDS_CASH");
       }
       return c.json({ eventId, replayed: false }, 201);
     },

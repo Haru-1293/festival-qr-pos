@@ -68,7 +68,7 @@ export function CashPanel({ refreshKey, onChanged }: { refreshKey: number; onCha
         </CardContent>
       </Card>
 
-      <DropForm onDone={changed} />
+      <DropForm held={t.expected} onDone={changed} />
       <CloseForm summary={summary} onDone={changed} />
 
       <Card>
@@ -87,11 +87,12 @@ export function CashPanel({ refreshKey, onChanged }: { refreshKey: number; onCha
   );
 }
 
-function DropForm({ onDone }: { onDone: () => void }) {
+function DropForm({ held, onDone }: { held: number; onDone: () => void }) {
   const confirm = useConfirm();
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [saved, setSaved] = useState<string | null>(null);
+  const [localErr, setLocalErr] = useState<string | null>(null);
   const { pending, error, run } = useAction();
   const reqId = useRequestId();
 
@@ -99,6 +100,8 @@ function DropForm({ onDone }: { onDone: () => void }) {
     e.preventDefault();
     const n = Number(amount);
     if (!Number.isInteger(n) || n <= 0) return;
+    if (n > held) return setLocalErr(`手元にあるはずの現金(${yen(held)})を超えて回収することはできません`);
+    setLocalErr(null);
     if (
       !(await confirm(`${yen(n)} を途中回収として記録しますか?`, {
         destructive: true,
@@ -123,7 +126,7 @@ function DropForm({ onDone }: { onDone: () => void }) {
         <CardTitle className="flex items-center gap-2">
           <Landmark className="size-5" /> 途中回収
         </CardTitle>
-        <CardDescription>受付に溜まった現金を、金庫などへ移したときに記録します。</CardDescription>
+        <CardDescription>受付に溜まった現金を、金庫などへ移したときに記録します。回収できるのは、手元にあるはずの現金({yen(held)})までです。</CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={submit} className="flex flex-col gap-3">
@@ -133,7 +136,7 @@ function DropForm({ onDone }: { onDone: () => void }) {
           <Field label="メモ(任意)">
             <Input value={note} onChange={(e) => setNote(e.target.value)} maxLength={200} placeholder="例: 金庫へ" />
           </Field>
-          <ErrorText message={error} />
+          <ErrorText message={localErr ?? error} />
           {saved && <p className="text-sm font-medium text-secondary-foreground">{saved}</p>}
           <Button type="submit" variant="outline" disabled={pending || !amount}>
             {pending ? "記録中…" : "途中回収を記録"}

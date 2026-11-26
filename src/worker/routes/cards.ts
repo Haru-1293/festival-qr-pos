@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { CardDto, IssuedCard } from "@shared/api";
+import type { CardDto, IssuedCard, PinMode } from "@shared/api";
 import type { AppEnv } from "../env";
 import { auditStmt } from "../lib/audit";
 import { getExpiryPolicy, maxExpiry, resolveExpiry } from "../lib/expiry";
 import { openText, sealText, vaultSecret } from "../lib/vault";
-import { activateCard } from "../lib/cardActivate";
+import { activateCard, resolveActivationPin } from "../lib/cardActivate";
 import { capByGlobal } from "../lib/globalExpiry";
-import { CARD_SELECT, type CardRow, cardUsableSql, newCardToken, toCardDto } from "../lib/cards";
+import { CARD_SELECT, type CardRow, cardUsableSql, newCardToken, randomPin, toCardDto } from "../lib/cards";
 import { hashPin, sha256Hex } from "../lib/crypto";
 import { badRequest, conflict, notFound } from "../lib/errors";
 import { newId } from "../lib/ids";
@@ -86,13 +86,14 @@ export const cardRoutes = new Hono<AppEnv>()
   // 発行(一括)。QRトークンはここで返す1回だけ。サーバーにはハッシュしか残らないので、印刷はこのレスポンスから行う
   .post(
     "/issue",
-    zv("json", z.object({ count: z.number().int().min(1, "枚数は1以上にしてください").max(100, "一度に発行できるのは100枚までです"), batch: z.string().trim().max(40).optional(), memo: z.string().trim().max(200).optional(), expiresAt: expirySchema })),
+    zv("json", z.object({ count: z.number().int().min(1, "枚数は1以上にしてください").max(100, "一度に発行できるのは100枚までです"), batch: z.string().trim().max(40).optional(), memo: z.string().trim().max(200).optional(), expiresAt: expirySchema, pinMode: z.enum(["USER", "ISSUE"]).default("USER") })),
     async (c) => {
       const auth = requireAuth(c);
       const b = c.req.valid("json");
       const db = c.env.DB;
       const now = Date.now();
       const expiresAt = await checkExpiry(c.env.DB, b.expiresAt, now);
+      if (b.pinMode === "ISSUE") pepper(c.env); // 発行時PINは暗号化して保存するため、秘密値が必要
       for (let attempt = 0; attempt < 3; attempt++) {
         // カード番号は連番(認証には使わない・再利用しない)。同時発行で重なったら一意制約で弾かれるので、やり直す
         const last = await db.prepare("SELECT COALESCE(MAX(CAST(SUBSTR(display_no, 2) AS INTEGER)), 0) AS n FROM cards").first<{ n: number }>();
@@ -104,15 +105,16 @@ export const cardRoutes = new Hono<AppEnv>()
           const { token, hash } = await newCardToken();
           const id = newId(now);
           const displayNo = `C${String(start + i).padStart(6, "0")}`;
-          issued.push({ id, displayNo, token, expiresAt });
+          const pin = b.pinMode === "ISSUE" ? randomPin() : null;
+          issued.push({ id, displayNo, token, expiresAt, pinMode: b.pinMode, pin });
           stmts.push(
             db.prepare("INSERT INTO token_tombstones (token_hash, kind, created_at) VALUES (?, 'CARD_QR', ?)").bind(hash, now),
             db
-              .prepare(`INSERT INTO cards (id, display_no, qr_token_hash, status, expires_at, issue_batch, memo, issued_at, issued_by, qr_enc) VALUES (?, ?, ?, 'ISSUED', ?, ?, ?, ?, ?, ?)`)
-              .bind(id, displayNo, hash, expiresAt, b.batch || null, b.memo || null, now, auth.userId, await sealText(secret, token)),
+              .prepare(`INSERT INTO cards (id, display_no, qr_token_hash, status, expires_at, issue_batch, memo, issued_at, issued_by, qr_enc, pin_mode, pin_enc) VALUES (?, ?, ?, 'ISSUED', ?, ?, ?, ?, ?, ?, ?, ?)`)
+              .bind(id, displayNo, hash, expiresAt, b.batch || null, b.memo || null, now, auth.userId, await sealText(secret, token), b.pinMode, pin ? await sealText(secret, pin) : null),
           );
         }
-        stmts.push(auditStmt(db, { actor: auth, action: "card.issue", targetType: "card", targetId: issued[0].id, after: { count: b.count, first: issued[0].displayNo, last: issued[issued.length - 1].displayNo, batch: b.batch ?? null } }));
+        stmts.push(auditStmt(db, { actor: auth, action: "card.issue", targetType: "card", targetId: issued[0].id, after: { count: b.count, first: issued[0].displayNo, last: issued[issued.length - 1].displayNo, batch: b.batch ?? null, pinMode: b.pinMode } }));
         try {
           await db.batch(stmts);
           return c.json({ cards: issued }, 201);
@@ -138,7 +140,7 @@ export const cardRoutes = new Hono<AppEnv>()
   .post(
     "/:id/activate",
     idParam,
-    zv("json", z.object({ nickname: z.string().trim().min(1, "ニックネームを入力してください").max(30, "ニックネームは30文字以内にしてください"), pin: pinSchema, memo: z.string().trim().max(200).optional(), expiresAt: expirySchema })),
+    zv("json", z.object({ nickname: z.string().trim().min(1, "ニックネームを入力してください").max(30, "ニックネームは30文字以内にしてください"), pin: pinSchema.optional(), memo: z.string().trim().max(200).optional(), expiresAt: expirySchema })),
     async (c) => {
       const auth = requireAuth(c);
       const { id } = c.req.valid("param");
@@ -148,7 +150,8 @@ export const cardRoutes = new Hono<AppEnv>()
       if (card.status !== "ISSUED") throw conflict("このカードはすでに有効化されているか、使えない状態です", "CARD_STATE");
       const now = Date.now();
       const expiresAt = await checkExpiry(c.env.DB, b.expiresAt ?? card.expires_at ?? undefined, now);
-      await activateCard(db, c.env, auth, card, { nickname: b.nickname, pin: b.pin, memo: b.memo, expiresAt });
+      const pin = await resolveActivationPin(vaultSecret(c.env), card, b.pin);
+      await activateCard(db, c.env, auth, card, { nickname: b.nickname, pin, memo: b.memo, expiresAt });
       return c.json({ card: toCardDto(await loadCard(db, id), now) }, 201);
     },
   )
@@ -221,14 +224,14 @@ export const cardRoutes = new Hono<AppEnv>()
     const db = c.env.DB;
     const secret = vaultSecret(c.env);
     const { results } = await db
-      .prepare(`SELECT id, display_no, qr_enc, expires_at FROM cards WHERE id IN (${ids.map(() => "?").join(",")}) AND status <> 'DELETED' ORDER BY display_no`)
+      .prepare(`SELECT id, display_no, qr_enc, expires_at, pin_mode, pin_enc, status FROM cards WHERE id IN (${ids.map(() => "?").join(",")}) AND status <> 'DELETED' ORDER BY display_no`)
       .bind(...ids)
-      .all<{ id: string; display_no: string; qr_enc: string | null; expires_at: number | null }>();
+      .all<{ id: string; display_no: string; qr_enc: string | null; expires_at: number | null; pin_mode: PinMode; pin_enc: string | null; status: string }>();
     const cards: IssuedCard[] = [];
     const missing: string[] = [];
     for (const r of results) {
       const token = await openText(secret, r.qr_enc);
-      if (token) cards.push({ id: r.id, displayNo: r.display_no, token, expiresAt: r.expires_at ?? 0 });
+      if (token) cards.push({ id: r.id, displayNo: r.display_no, token, expiresAt: r.expires_at ?? 0, pinMode: r.pin_mode, pin: r.status === "ISSUED" ? await openText(secret, r.pin_enc) : null });
       else missing.push(r.display_no);
     }
     if (cards.length > 0) {
@@ -255,7 +258,7 @@ export const cardRoutes = new Hono<AppEnv>()
       auditStmt(db, { actor: auth, action: "card.regenerate", targetType: "card", targetId: id, after: { displayNo: card.display_no } }),
     ]);
     if ((res[2].meta.changes ?? 0) !== 1) throw conflict("カードの状態が変わりました", "CARD_STATE");
-    return c.json({ card: { id, displayNo: card.display_no, token, expiresAt: card.expires_at ?? 0 } satisfies IssuedCard });
+    return c.json({ card: { id, displayNo: card.display_no, token, expiresAt: card.expires_at ?? 0, pinMode: card.pin_mode, pin: await openText(vaultSecret(c.env), card.pin_enc) } satisfies IssuedCard });
   })
 
   // 削除(ソフト削除): QR・PINの資格を失効させる。残高と取引の履歴は残る。
@@ -298,7 +301,7 @@ export const cardRoutes = new Hono<AppEnv>()
       // ① 旧カードを削除(QR・PINは失効。削除済みでないときだけ)。続く文は「①が成功したときだけ」動く
       stmts.push(
         db
-          .prepare("UPDATE cards SET status = 'DELETED', deleted_at = ?, deleted_by = ?, delete_reason = ?, qr_token_hash = NULL, qr_enc = NULL, pin_hash = NULL WHERE id = ? AND status <> 'DELETED'")
+          .prepare("UPDATE cards SET status = 'DELETED', deleted_at = ?, deleted_by = ?, delete_reason = ?, qr_token_hash = NULL, qr_enc = NULL, pin_hash = NULL, pin_enc = NULL WHERE id = ? AND status <> 'DELETED'")
           .bind(now, auth.userId, b.reason, id),
         db.prepare("UPDATE token_tombstones SET retired_at = ? WHERE token_hash = ?").bind(now, old?.qr_token_hash ?? ""),
       );

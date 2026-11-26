@@ -107,7 +107,8 @@ for who in ADMIN MGR CLERK; do
 done
 expect "照会しても残高は変わらない" "$EXPECT_BAL" "$(sqlv "SELECT w.balance FROM wallets w JOIN cards c ON c.wallet_id=w.id WHERE c.nickname='照会'")"
 lookup $R1 $T6; check "照会してもQRは使える(消費されない)" 200
-req $R1 POST /api/balance/inquiry "{\"token\":\"$T6\"}"; check "受付は残高照会タブの対象外(403)" 403
+req $R1 POST /api/balance/inquiry "{\"token\":\"$T6\"}"; check "受付も残高照会できる" 200
+expect "受付: 残高" "$EXPECT_BAL" "$(jget "['balance']")"
 req $ANON POST /api/balance/inquiry "{\"token\":\"$T6\"}"; check "未ログインは401" 401
 req $ALICE POST /api/auth/register '{"email":"alice@example.com","password":"alicepass1","nickname":"alice"}'
 req $ALICE POST /api/balance/inquiry "{\"token\":\"$T6\"}"; check "利用者は不可" 403
@@ -116,9 +117,37 @@ req $CLERK POST /api/balance/inquiry '{"token":"FES1:C:doesnotexist0000000000000
 req $CLERK POST /api/balance/inquiry "{\"token\":\"$T3\"}"; check "未有効のカードも照会できる" 200
 expect "未有効の状態" ISSUED "$(jget "['status']")"
 expect "未有効の残高は0" 0 "$(jget "['balance']")"
-expect "照会が監査ログに残る" 4 "$(sqlv "SELECT COUNT(*) FROM audit_logs WHERE action='card.balance_view'")"
+expect "照会が監査ログに残る" 5 "$(sqlv "SELECT COUNT(*) FROM audit_logs WHERE action='card.balance_view'")"
 expect "照会者が記録される" 1 "$(sqlv "SELECT COUNT(DISTINCT actor_user_id)>=3 FROM audit_logs WHERE action='card.balance_view'")"
 req $ADMIN POST /api/cards/$C3/suspend '{"reason":"テスト"}' ; req $CLERK POST /api/balance/inquiry "{\"token\":\"$T3\"}"; check "停止中でも照会できる" 200
+
+echo "== PINの決め方: 発行時にランダムなPIN =="
+req $ADMIN POST /api/cards/issue '{"count":3,"pinMode":"ISSUE"}'; check "発行時PINのカードを3枚発行" 201
+python3 -I -c "
+import json;d=json.load(open('$TMP/body'))['cards']
+open('$TMP/p_ids','w').write(' '.join(c['id'] for c in d));open('$TMP/p_toks','w').write(' '.join(c['token'] for c in d));open('$TMP/p_pins','w').write(' '.join(c['pin'] for c in d))
+print('modes', {c['pinMode'] for c in d}, 'pins4', all(len(c['pin'])==4 and c['pin'].isdigit() for c in d))"
+read -r P1 P2 P3 < $TMP/p_ids; read -r PT1 PT2 PT3 < $TMP/p_toks; read -r PP1 PP2 PP3 < $TMP/p_pins
+expect "PINが4桁の数字" 1 "$(python3 -I -c "print(int(all(len(x)==4 and x.isdigit() for x in '$PP1 $PP2 $PP3'.split())))")"
+expect "PINが平文でDBに入っていない" 0 "$(sqlv "SELECT COUNT(*) FROM cards WHERE pin_enc LIKE '%$PP1%' AND id='$P1'")"
+expect "pin_modeがISSUE" 3 "$(sqlv "SELECT COUNT(*) FROM cards WHERE pin_mode='ISSUE'")"
+req $ADMIN POST /api/cards/qr-batch "{\"ids\":[\"$P1\"]}"; check "あとからPINも再表示できる" 200
+expect "再表示のPINが同じ" "$PP1" "$(jget "['cards'][0]['pin']")"
+req $R1 POST /api/reception/card-info "{\"token\":\"$PT1\"}"; check "受付: カード情報" 200
+expect "受付: PINの決め方" ISSUE "$(jget "['pinMode']")"
+req $R1 POST /api/reception/card-info "{\"token\":\"$T5\"}"; expect "ユーザー設定カードはUSER" ACTIVE "$(jget "['status']")"
+req $R1 POST /api/reception/activate-card "{\"token\":\"$PT1\",\"nickname\":\"かな\",\"cashAmount\":300,\"requestId\":\"$(rid)\"}"; check "受付: PIN入力なしで有効化+チャージ" 201
+expect "有効化後は発行時PINの暗号文が消える" "" "$(sqlv "SELECT COALESCE(pin_enc,'') FROM cards WHERE id='$P1'")"
+req $R1 POST /api/reception/lookup "{\"token\":\"$PT1\"}"; check "有効化したカードを読み取れる" 200; LKP=$(jget "['lookupId']"); BP=$(jget "['wallet']['balance']")
+req $R1 POST /api/reception/payout "{\"lookupId\":\"$LKP\",\"requestId\":\"$(rid)\",\"expectedBalance\":$BP,\"pin\":\"$(python3 -I -c "print('0000' if '$PP1'!='0000' else '1111')")\"}"; check "違うPINは拒否" 403
+req $R1 POST /api/reception/payout "{\"lookupId\":\"$LKP\",\"requestId\":\"$(rid)\",\"expectedBalance\":$BP,\"pin\":\"$PP1\"}"; check "印字されたPINで払い戻せる" 201
+req $ADMIN POST /api/cards/qr-batch "{\"ids\":[\"$P1\"]}"; expect "有効化後はPINを返さない" None "$(jget "['cards'][0]['pin']")"
+req $ADMIN POST /api/cards/$P2/activate '{"nickname":"管理者有効化"}'; check "管理者: 発行時PINのカードはPINなしで有効化" 201
+req $ADMIN POST /api/cards/$P3/regenerate '{}'; check "未有効の再生成" 200
+expect "再生成してもPINは同じ" "$PP3" "$(jget "['card']['pin']")"
+req $ADMIN POST /api/cards/issue '{"count":1,"pinMode":"USER"}'; U1=$(jget "['cards'][0]['id']"); expect "ユーザー設定のカードにはPINがない" None "$(jget "['cards'][0]['pin']")"
+req $ADMIN POST /api/cards/$U1/activate '{"nickname":"PINなし"}'; check "ユーザー設定のカードでPINなしは400" 400
+req $ADMIN POST /api/cards/issue '{"count":1,"pinMode":"BAD"}'; check "不正なpinModeは400" 400
 
 echo
 echo "結果: pass=$pass fail=$fail"

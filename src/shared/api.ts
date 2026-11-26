@@ -473,6 +473,8 @@ export interface HistoryItem {
 // ---------- 物理カード ----------
 export type CardStatus = "ISSUED" | "ACTIVE" | "SUSPENDED" | "EXPIRED" | "DELETED";
 
+export type PinMode = "USER" | "ISSUE";
+
 export interface CardDto {
   id: string;
   displayNo: string;
@@ -492,6 +494,8 @@ export interface CardDto {
   deleteReason: string | null;
   lastUsedAt: number | null;
   reissuedFrom: string | null;
+  /** PINの決め方。USER=有効化のときにお客様が決める / ISSUE=発行時に決めてカードに印字 */
+  pinMode: PinMode;
 }
 
 /** 発行・再生成の直後だけ返す、印刷用のQR内容(サーバーにはハッシュしか残らない) */
@@ -500,6 +504,9 @@ export interface IssuedCard {
   displayNo: string;
   token: string;
   expiresAt: number;
+  pinMode: PinMode;
+  /** 発行時PIN(ISSUE のカードで、まだ有効化されていないときだけ)。カードに印字する */
+  pin: string | null;
 }
 
 // ---------- 割引・クーポン(全体管理者) ----------

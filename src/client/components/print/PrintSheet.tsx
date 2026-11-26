@@ -1,7 +1,7 @@
 import { Paintbrush, Plus, Printer } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { defaultLayout, type PrintCardData, type PrintKind, type PrintTemplateFull, type PrintTemplateSummary } from "@shared/printDesign";
+import { defaultLayout, normalizeLayout, type PrintCardData, type PrintKind, type PrintTemplateFull, type PrintTemplateSummary } from "@shared/printDesign";
 import { ErrorText, Field } from "@/components/Shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -103,7 +103,7 @@ export function PrintSheet({
     }
   }, [kind, selId, dx, dy]);
 
-  const layout = (selected ? full?.layout : null) ?? selected?.layout ?? defaultLayout(kind);
+  const layout = normalizeLayout(kind, (selected ? full?.layout : null) ?? selected?.layout ?? defaultLayout(kind));
   const image = selected && full ? full.image : null;
   const loadingImage = !!selected?.hasImage && !full;
   const sample = items[0] ?? { qr: "FES1:SAMPLE" };

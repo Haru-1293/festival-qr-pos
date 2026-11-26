@@ -5,7 +5,7 @@ export type PrintKind = "LOGIN" | "CARD";
 
 export const ELEMENT_KEYS = {
   LOGIN: ["qr", "name", "loginId", "role", "festival", "shop"],
-  CARD: ["qr", "displayNo", "expiry", "festival"],
+  CARD: ["qr", "displayNo", "expiry", "festival", "pin"],
 } as const;
 export type ElementKey = (typeof ELEMENT_KEYS)[PrintKind][number];
 
@@ -18,6 +18,7 @@ export const ELEMENT_LABEL: Record<string, string> = {
   shop: "店舗名",
   displayNo: "カード番号",
   expiry: "有効期限",
+  pin: "PIN(印字・記入欄)",
 };
 
 export interface DesignElement {
@@ -42,10 +43,23 @@ export interface PrintLayout {
   bg: string;
   /** 背景画像の表示: cover=はみ出しを切る / contain=全体を収める */
   fit: "cover" | "contain";
+  /** 背景画像を置く枠(カードの幅・高さに対する%)。なければカード全面。ドラッグ・拡縮で動かせる */
+  imageBox?: ImageBox;
   /** 余白なしで並べる枚数の間に入れる切り取り用の間隔(mm) */
   gapMm: number;
+  /** 重なりの順番: 先頭が最背面、末尾が最前面(背景画像は常に全要素の下) */
   elements: DesignElement[];
 }
+
+export interface ImageBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+export const IMAGE_BOX_FULL: ImageBox = { x: 0, y: 0, w: 100, h: 100 };
+/** レイヤー一覧・選択で、背景画像を指すキー */
+export const IMAGE_LAYER = "__image";
 
 const num = (min: number, max: number) => z.number().min(min).max(max);
 const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/);
@@ -62,11 +76,14 @@ export const elementSchema = z.object({
   bold: z.boolean(),
 });
 
+export const imageBoxSchema = z.object({ x: num(-300, 400), y: num(-300, 400), w: num(1, 500), h: num(1, 500) });
+
 export const layoutSchema = z.object({
   widthMm: num(30, 300),
   heightMm: num(30, 400),
   bg: colorSchema,
   fit: z.enum(["cover", "contain"]),
+  imageBox: imageBoxSchema.optional(),
   gapMm: num(0, 30),
   elements: z.array(elementSchema).min(1).max(12),
 });
@@ -138,8 +155,9 @@ export function defaultLayout(kind: PrintKind): PrintLayout {
     elements: [
       el("festival", 5, 4, 90, 3.2, { color: "#06a850", bold: true }),
       el("qr", 15, 14, 70, 0),
-      el("displayNo", 5, 78, 90, 5, { bold: true }),
-      el("expiry", 5, 90, 90, 2.6, { color: "#555555" }),
+      el("displayNo", 5, 74, 90, 5, { bold: true }),
+      el("pin", 5, 82, 90, 3.6, { bold: true }),
+      el("expiry", 5, 91, 90, 2.6, { color: "#555555" }),
     ],
   };
 }
@@ -154,4 +172,21 @@ export interface PrintCardData {
   shop?: string | null;
   displayNo?: string;
   expiry?: string;
+  /** 発行時に決めたPIN(4桁)。カードに印字する */
+  pin?: string;
+  /** PINをお客様が決めるカード: PINの記入欄(□□□□)を印刷する */
+  pinBlank?: boolean;
+}
+
+/**
+ * 保存済みのデザインに、あとから増えた要素(例: PIN)が無いとき、標準の位置で足す。
+ * 並び順(重なり)は保存されたものを崩さず、足す要素は最前面に置く。
+ */
+export function normalizeLayout(kind: PrintKind, layout: PrintLayout): PrintLayout {
+  const have = new Set(layout.elements.map((e) => e.key));
+  const missing = defaultLayout(kind).elements.filter((e) => !have.has(e.key));
+  const keys = new Set<string>(ELEMENT_KEYS[kind]);
+  const kept = layout.elements.filter((e) => keys.has(e.key));
+  if (missing.length === 0 && kept.length === layout.elements.length) return layout;
+  return { ...layout, elements: [...kept, ...missing] };
 }

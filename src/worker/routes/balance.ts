@@ -11,11 +11,11 @@ import { zv } from "../lib/validate";
 import { requireAuth, requireRole } from "../middleware/auth";
 
 /**
- * 残高照会。店員・店舗責任者・全体管理者が、カードのQRを読み取って残高を確認する。
+ * 残高照会。店員・店舗責任者・受付・全体管理者が、カードのQRを読み取って残高を確認する。
  * 読み取るだけで、QR・残高・状態は何も変わらない(PINも不要)。誰が見たかは監査ログに残す。
  */
 export const balanceRoutes = new Hono<AppEnv>()
-  .use("*", requireRole("ADMIN", "SHOP_MANAGER", "CLERK"))
+  .use("*", requireRole("ADMIN", "SHOP_MANAGER", "CLERK", "RECEPTION"))
   .post("/inquiry", zv("json", z.object({ token: z.string().trim().max(100) })), async (c) => {
     const auth = requireAuth(c);
     const { token } = c.req.valid("json");
