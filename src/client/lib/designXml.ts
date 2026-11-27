@@ -1,4 +1,4 @@
-import { ELEMENT_KEYS, IMAGE_DATA_URL_MAX, imageSchema, layoutSchema, normalizeLayout, type DesignElement, type ImageBox, type PrintKind, type PrintLayout } from "@shared/printDesign";
+import { ELEMENT_KEYS, IMAGE_DATA_URL_MAX, IMAGE_R2_MAX_BYTES, imageSchema, layoutSchema, normalizeLayout, type DesignElement, type ImageBox, type PrintKind, type PrintLayout } from "@shared/printDesign";
 
 /**
  * カードデザインの XML 書き出し・読み込み。仕様は docs/spec/card-design-xml.md。
@@ -6,6 +6,13 @@ import { ELEMENT_KEYS, IMAGE_DATA_URL_MAX, imageSchema, layoutSchema, normalizeL
  */
 export const DESIGN_XML_VERSION = "1";
 export const DESIGN_XML_MAX_BYTES = 2_000_000;
+/** 画像をR2に置くときのXMLの上限(画像10MBのbase64 ≒ 13.4MB に、そのほかの記述を足した大きさ) */
+export const DESIGN_XML_MAX_BYTES_R2 = 15_000_000;
+
+export interface ParseOptions {
+  /** 背景画像の保存先がR2か(画像の上限が大きい)。既定はD1(縮小したもの) */
+  r2?: boolean;
+}
 
 export interface DesignDoc {
   kind: PrintKind;
@@ -24,7 +31,7 @@ export function designToXml(d: DesignDoc): string {
   out.push(`<cardDesign version="${DESIGN_XML_VERSION}" kind="${d.kind}" name="${esc(d.name)}">`);
   out.push(`  <page widthMm="${n(l.widthMm)}" heightMm="${n(l.heightMm)}" background="${l.bg}" gapMm="${n(l.gapMm)}"/>`);
   if (d.image) {
-    const m = /^data:(image\/(?:png|jpeg|webp));base64,(.+)$/.exec(d.image);
+    const m = /^data:(image\/(?:png|jpeg|webp));base64,([\s\S]+)$/.exec(d.image);
     if (m) {
       const b = l.imageBox;
       const box = b ? ` x="${n(b.x)}" y="${n(b.y)}" w="${n(b.w)}" h="${n(b.h)}"` : "";
@@ -53,8 +60,9 @@ const num = (v: string | null, what: string): number => {
   return x;
 };
 
-export function xmlToDesign(text: string): DesignDoc {
-  if (text.length > DESIGN_XML_MAX_BYTES) throw new Error("XMLファイルが大きすぎます(2MBまで)");
+export function xmlToDesign(text: string, opts: ParseOptions = {}): DesignDoc {
+  const xmlMax = opts.r2 ? DESIGN_XML_MAX_BYTES_R2 : DESIGN_XML_MAX_BYTES;
+  if (text.length > xmlMax) throw new Error(`XMLファイルが大きすぎます(${Math.floor(xmlMax / 1_000_000)}MBまで)`);
   const doc = new DOMParser().parseFromString(text, "application/xml");
   if (doc.getElementsByTagName("parsererror").length > 0) throw new Error("XMLとして読み込めませんでした。ファイルが壊れていないか確認してください");
   const root = doc.documentElement;
@@ -84,8 +92,14 @@ export function xmlToDesign(text: string): DesignDoc {
     if (mime !== "image/png" && mime !== "image/jpeg" && mime !== "image/webp") throw new Error("image の mime は image/png・image/jpeg・image/webp のどれかにしてください");
     const b64 = (imageEl.textContent ?? "").replace(/\s+/g, "");
     image = `data:${mime};base64,${b64}`;
-    const parsed = imageSchema.safeParse(image);
-    if (!parsed.success) throw new Error(image.length > IMAGE_DATA_URL_MAX ? "背景画像が大きすぎます(約650KBまで)" : "背景画像のデータ(base64)が正しくありません");
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) throw new Error("背景画像のデータ(base64)が正しくありません");
+    if (opts.r2) {
+      // R2に置く: 保存ボタンを押したときにアップロードされる。ここでは大きさだけ確かめる
+      const bytes = Math.floor((b64.length * 3) / 4);
+      if (bytes > IMAGE_R2_MAX_BYTES) throw new Error(`背景画像が大きすぎます(${Math.floor(IMAGE_R2_MAX_BYTES / 1_000_000)}MBまで)`);
+    } else if (!imageSchema.safeParse(image).success) {
+      throw new Error(image.length > IMAGE_DATA_URL_MAX ? "背景画像が大きすぎます(この環境では約0.65MBまで。R2を設定すると10MBまで使えます)" : "背景画像のデータ(base64)が正しくありません");
+    }
     const f = imageEl.getAttribute("fit");
     if (f !== null) {
       if (f !== "cover" && f !== "contain") throw new Error("image の fit は cover か contain にしてください");

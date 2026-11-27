@@ -105,7 +105,19 @@ export function PrintSheet({
 
   const layout = normalizeLayout(kind, (selected ? full?.layout : null) ?? selected?.layout ?? defaultLayout(kind));
   const image = selected && full ? full.image : null;
-  const loadingImage = !!selected?.hasImage && !full;
+  // 背景画像が読み込み終わるまで印刷させない(R2の画像はURLで読むため)
+  const [imgReady, setImgReady] = useState<string | null>(null);
+  useEffect(() => {
+    if (!image) return;
+    let alive = true;
+    const el = new Image();
+    el.src = image;
+    void el.decode().catch(() => undefined).then(() => alive && setImgReady(image));
+    return () => {
+      alive = false;
+    };
+  }, [image]);
+  const loadingImage = !!selected?.hasImage && (!full || (!!image && imgReady !== image));
   const sample = items[0] ?? { qr: "FES1:SAMPLE" };
   const perPage = useMemo(() => {
     const usableW = 186;

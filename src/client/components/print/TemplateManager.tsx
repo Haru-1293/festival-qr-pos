@@ -9,6 +9,8 @@ import { api } from "@/lib/api";
 import { designToXml, downloadText, safeFileName, xmlToDesign } from "@/lib/designXml";
 import { cn } from "@/lib/utils";
 import { TemplateEditor } from "./TemplateEditor";
+import { toDataUrl } from "./imageUtil";
+import { useImageStorage } from "./useImageStorage";
 
 const SAMPLE: Record<PrintKind, PrintCardData> = {
   CARD: { qr: "FES1:C:SAMPLE-SAMPLE-SAMPLE", displayNo: "C000123", expiry: "2027-05-31", festival: "文化祭", pin: "4821" },
@@ -26,6 +28,7 @@ export function TemplateManager({ kind: initialKind = "CARD" }: { kind?: PrintKi
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ template: PrintTemplateFull | null; initial?: { name: string; layout: PrintLayout; image: string | null } } | null>(null);
   const xml = useRef<HTMLInputElement>(null);
+  const storage = useImageStorage();
 
   const load = useCallback(async () => {
     setList(null);
@@ -53,7 +56,7 @@ export function TemplateManager({ kind: initialKind = "CARD" }: { kind?: PrintKi
     setError(null);
     try {
       const t = await full(id);
-      downloadText(`${safeFileName(t.name)}.xml`, designToXml({ kind: t.kind, name: t.name, layout: t.layout, image: t.image }));
+      downloadText(`${safeFileName(t.name)}.xml`, designToXml({ kind: t.kind, name: t.name, layout: t.layout, image: t.image ? await toDataUrl(t.image) : null }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "書き出せませんでした");
     }
@@ -62,7 +65,8 @@ export function TemplateManager({ kind: initialKind = "CARD" }: { kind?: PrintKi
     if (!f) return;
     setError(null);
     try {
-      const d = xmlToDesign(await f.text());
+      if (!storage) throw new Error("保存先を確認しています。少し待ってからもう一度お試しください");
+      const d = xmlToDesign(await f.text(), { r2: storage.mode === "r2" });
       if (d.kind !== kind) setKind(d.kind);
       setEditing({ template: null, initial: { name: d.name, layout: d.layout, image: d.image } });
     } catch (e) {

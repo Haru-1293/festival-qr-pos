@@ -5,6 +5,8 @@
 //   D1_DATABASE_ID  任意  D1 の database_id。未設定なら wrangler.jsonc の値をそのまま使う
 //   SETUP_TOKEN     任意  設定されていれば Worker のシークレットとして登録する(未設定なら今の値を変えない)
 //   PIN_PEPPER      任意  同上。32文字以上。後から変えると全カードPINが無効になる
+//   R2_BUCKET_NAME  任意  設定すると、カードデザインの背景画像をR2に保存する(画像は10MBまで)。
+//                       そのバケットが無ければ作成し、Worker に IMAGES として結びつける。未設定ならD1に縮小して保存(約0.9MBまで)
 //   PBKDF2_ITERATIONS 任意  パスワード・PINのハッシュの反復回数(1000〜100000)。未設定なら 10000(無料プラン向け)
 //
 // 使い方(Workers Builds の Deploy command): npm run deploy:builds
@@ -41,6 +43,30 @@ if (dbId) {
   const cur = /"database_id"\s*:\s*"([^"]*)"/.exec(config)?.[1] ?? "";
   if (!cur || /^0+(-0+)*$/.test(cur)) fail("database_id が未設定です。ビルド変数 D1_DATABASE_ID を設定してください");
   console.log(`✓ database_id は ${CONFIG} の値を使います`);
+}
+
+// 1b) R2(任意): ビルド変数 R2_BUCKET_NAME があるときだけ、背景画像の保存先として結びつける
+const bucket = env("R2_BUCKET_NAME");
+if (bucket) {
+  if (!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket)) fail("R2_BUCKET_NAME は、小文字・数字・ハイフンの3〜63文字にしてください");
+  if (!config.includes('"r2_buckets"')) {
+    config = config.replace(/(\n\s*)"d1_databases"/, `$1"r2_buckets": [{ "binding": "IMAGES", "bucket_name": "${bucket}" }],$1"d1_databases"`);
+    if (!config.includes('"r2_buckets"')) fail(`${CONFIG} に r2_buckets を追加できませんでした`);
+    if (!DRY) writeFileSync(CONFIG, config);
+  }
+  // バケットが無ければ作る(すでにあるときの失敗は無視する)
+  console.log(`$ npx wrangler r2 bucket create ${bucket}`);
+  if (!DRY) {
+    const r = spawnSync("npx", ["wrangler", "r2", "bucket", "create", bucket], { encoding: "utf8", env: process.env });
+    const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+    if (r.status !== 0 && !/already exists|10004/i.test(out)) {
+      console.error(out);
+      fail("R2バケットを作れませんでした(R2が有効か、APIトークンの権限を確認してください)");
+    }
+  }
+  console.log(`✓ 背景画像の保存先: R2 バケット ${bucket}`);
+} else {
+  console.log("✓ 背景画像の保存先: D1(R2を使うにはビルド変数 R2_BUCKET_NAME を設定)");
 }
 
 // 2) シークレットの検証(デプロイ前に、足りない・短い値を止める)

@@ -95,12 +95,33 @@ export const imageSchema = z
   .max(IMAGE_DATA_URL_MAX, "画像が大きすぎます")
   .regex(/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/, "PNG・JPEG・WebPの画像を選んでください");
 
-export const templateBodySchema = z.object({
-  kind: z.enum(["LOGIN", "CARD"]),
-  name: z.string().trim().min(1, "名前を入力してください").max(40),
-  layout: layoutSchema,
-  image: imageSchema.nullable(),
-});
+/** R2に置く背景画像の上限(1枚あたり)。XMLに入れるとbase64で約1.34倍になる */
+export const IMAGE_R2_MAX_BYTES = 10_000_000;
+export const IMAGE_KEY_PATTERN = /^[0-9A-Za-z]{26}\.(png|jpg|webp)$/;
+export const IMAGE_URL_PREFIX = "/api/print-templates/images/";
+
+const oneImage = (b: { image: string | null; imageKey: string | null }) => !(b.image && b.imageKey);
+const oneImageMsg = { message: "画像は1つだけ指定してください" };
+
+const templateBase = z
+  .object({
+    kind: z.enum(["LOGIN", "CARD"]),
+    name: z.string().trim().min(1, "名前を入力してください").max(40),
+    layout: layoutSchema,
+    /** R2を使わない設定のとき: 画面側で縮小したdata URL(D1の1行に収める) */
+    image: imageSchema.nullable().default(null),
+    /** R2を使うとき: アップロード済み画像のキー */
+    imageKey: z.string().regex(IMAGE_KEY_PATTERN).nullable().default(null),
+  });
+export const templateBodySchema = templateBase.refine(oneImage, oneImageMsg);
+export const templateUpdateSchema = templateBase.omit({ kind: true }).refine(oneImage, oneImageMsg);
+
+/** 背景画像の保存先の設定(R2が使えるか) */
+export interface ImageStorageInfo {
+  mode: "r2" | "inline";
+  /** 1枚あたりの上限(バイト)。inline は縮小後のdata URLの長さ */
+  maxBytes: number;
+}
 
 export interface PrintTemplateSummary {
   id: string;

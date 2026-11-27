@@ -26,10 +26,10 @@ export async function api<T>(path: string, opts: Options = {}): Promise<T> {
       method: opts.method ?? (opts.body === undefined ? "GET" : "POST"),
       credentials: "same-origin",
       headers: {
-        ...(opts.body === undefined ? {} : { "content-type": "application/json" }),
+        ...(opts.body === undefined ? {} : { "content-type": opts.body instanceof Blob ? opts.body.type : "application/json" }),
         ...opts.headers,
       },
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      body: opts.body === undefined ? undefined : opts.body instanceof Blob ? opts.body : JSON.stringify(opts.body),
     });
   } catch {
     throw new ApiRequestError(0, "NETWORK", "通信できませんでした。電波の状態を確認してください");

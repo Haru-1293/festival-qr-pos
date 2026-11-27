@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, Download, Eye, EyeOff, ImagePlus, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { defaultLayout, ELEMENT_LABEL, IMAGE_BOX_FULL, IMAGE_LAYER, normalizeLayout, type DesignElement, type ImageBox, type PrintCardData, type PrintKind, type PrintLayout, type PrintTemplateFull } from "@shared/printDesign";
+import { defaultLayout, ELEMENT_LABEL, IMAGE_BOX_FULL, IMAGE_KEY_PATTERN, IMAGE_LAYER, IMAGE_URL_PREFIX, normalizeLayout, type DesignElement, type ImageBox, type PrintCardData, type PrintKind, type PrintLayout, type PrintTemplateFull } from "@shared/printDesign";
 import { ErrorText, Field } from "@/components/Shell";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -13,7 +13,8 @@ import { designToXml, downloadText, safeFileName, xmlToDesign } from "@/lib/desi
 import { useAction } from "@/lib/useAction";
 import { cn } from "@/lib/utils";
 import { PrintCard } from "./PrintCard";
-import { imageToDataUrl } from "./imageUtil";
+import { dataUrlToBlob, fileToDataUrl, imageToDataUrl, toDataUrl } from "./imageUtil";
+import { useImageStorage } from "./useImageStorage";
 
 const SIZE_PRESETS: { id: string; label: string; w: number; h: number }[] = [
   { id: "meishi", label: "名刺(91×55mm)", w: 91, h: 55 },
@@ -100,6 +101,10 @@ export function TemplateEditor({
   onSaved: (id: string) => void;
 }) {
   const confirm = useConfirm();
+  const storage = useImageStorage();
+  const r2 = storage?.mode === "r2";
+  // アップロード済みの画像(同じ画像を保存し直しても、二重にアップロードしない)
+  const uploaded = useRef<{ src: string; key: string } | null>(null);
   const [name, setName] = useState(template?.name ?? initial?.name ?? "新しいデザイン");
   const [layout, setLayout] = useState<PrintLayout>(() => normalizeLayout(kind, template?.layout ?? initial?.layout ?? defaultLayout(kind)));
   const [image, setImage] = useState<string | null>(template?.image ?? initial?.image ?? null);
@@ -316,9 +321,11 @@ export function TemplateEditor({
 
   const pickImage = async (f: File | undefined) => {
     if (!f) return;
+    if (!storage) return setImgError("保存先を確認しています。少し待ってからもう一度お試しください");
     setImgError(null);
     try {
-      setImage(await imageToDataUrl(f));
+      // R2: そのまま読み込む(保存ボタンを押すまでアップロードしない) / D1: 縮小・圧縮する
+      setImage(r2 ? await fileToDataUrl(f, storage.maxBytes) : await imageToDataUrl(f));
       setLayout((l) => ({ ...l, imageBox: undefined }));
       setSel(IMAGE_LAYER);
     } catch (e) {
@@ -334,15 +341,20 @@ export function TemplateEditor({
   const setSize = (w: number, h: number) => setLayout((l) => ({ ...l, widthMm: w, heightMm: h }));
   const preset = SIZE_PRESETS.find((p) => p.w === layout.widthMm && p.h === layout.heightMm)?.id ?? "custom";
 
-  const exportXml = () => {
-    const xml = designToXml({ kind, name: name.trim() || "design", layout, image });
-    downloadText(`${safeFileName(name)}.xml`, xml);
+  const exportXml = async () => {
+    setXmlError(null);
+    try {
+      const xml = designToXml({ kind, name: name.trim() || "design", layout, image: image ? await toDataUrl(image) : null });
+      downloadText(`${safeFileName(name)}.xml`, xml);
+    } catch (e) {
+      setXmlError(e instanceof Error ? e.message : "書き出せませんでした");
+    }
   };
   const importXml = async (f: File | undefined) => {
     if (!f) return;
     setXmlError(null);
     try {
-      const d = xmlToDesign(await f.text());
+      const d = xmlToDesign(await f.text(), { r2 });
       if (d.kind !== kind) throw new Error(`このXMLは${d.kind === "LOGIN" ? "ログインカード" : "QRカード"}用です。${kind === "LOGIN" ? "ログインカード" : "QRカード"}のデザインを選んでください`);
       if (!(await confirm("いま編集中の内容を、XMLの内容で置き換えます。よろしいですか?(保存するまでは、元のデザインは変わりません)", { action: "置き換える", destructive: true }))) return;
       setName(d.name);
@@ -354,20 +366,36 @@ export function TemplateEditor({
     }
   };
 
-  const body = () => ({ name: name.trim(), layout, image });
+  // 画像をサーバーに渡す形にする。R2なら、ここ(保存ボタン)で初めてアップロードする
+  const imageBody = async (): Promise<{ image: string | null; imageKey: string | null }> => {
+    if (!image) return { image: null, imageKey: null };
+    if (image.startsWith(IMAGE_URL_PREFIX)) {
+      const key = image.slice(IMAGE_URL_PREFIX.length);
+      if (!IMAGE_KEY_PATTERN.test(key)) throw new Error("背景画像の参照が正しくありません");
+      return { image: null, imageKey: key };
+    }
+    if (!r2) return { image, imageKey: null };
+    if (uploaded.current?.src === image) return { image: null, imageKey: uploaded.current.key };
+    const r = await api<{ key: string }>("/print-templates/images", { method: "POST", body: dataUrlToBlob(image) });
+    uploaded.current = { src: image, key: r.key };
+    return { image: null, imageKey: r.key };
+  };
+  const body = async () => ({ name: name.trim(), layout, ...(await imageBody()) });
   const saveOver = () =>
     save.run(async () => {
+      const b = await body();
       if (!template) {
-        const r = await api<{ id: string }>("/print-templates", { method: "POST", body: { kind, ...body() } });
+        const r = await api<{ id: string }>("/print-templates", { method: "POST", body: { kind, ...b } });
         onSaved(r.id);
       } else {
-        await api(`/print-templates/${template.id}`, { method: "PUT", body: body() });
+        await api(`/print-templates/${template.id}`, { method: "PUT", body: b });
         onSaved(template.id);
       }
     });
   const saveNew = () =>
     save.run(async () => {
-      const r = await api<{ id: string }>("/print-templates", { method: "POST", body: { kind, ...body(), name: template && name.trim() === template.name ? `${name.trim()}(コピー)`.slice(0, 40) : name.trim() } });
+      const b = await body();
+      const r = await api<{ id: string }>("/print-templates", { method: "POST", body: { kind, ...b, name: template && name.trim() === template.name ? `${name.trim()}(コピー)`.slice(0, 40) : name.trim() } });
       onSaved(r.id);
     });
   const remove = async () => {
@@ -484,7 +512,7 @@ export function TemplateEditor({
               </div>
               <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => { void pickImage(e.target.files?.[0]); e.target.value = ""; }} />
               <ErrorText message={imgError} />
-              <p className="text-xs text-muted-foreground">PNG・JPEG・WebP。自動で縮小・圧縮して保存します。選ぶと全面に敷かれます。ドラッグで動かし、周りの点で拡大・縮小できます。</p>
+              <p className="text-xs text-muted-foreground">PNG・JPEG・WebP。{storage ? (r2 ? `そのままの画質で${Math.floor(storage.maxBytes / 1_000_000)}MBまで使えます(保存ボタンを押すとアップロードします)。` : "自動で縮小・圧縮して保存します(R2を設定すると、縮小せず10MBまで使えます)。") : ""}選ぶと全面に敷かれます。ドラッグで動かし、周りの点で拡大・縮小できます。</p>
             </div>
 
             {/* 選んだものの数値 */}
@@ -615,7 +643,7 @@ export function TemplateEditor({
             <div className="flex flex-col gap-1.5 rounded-xl border border-border p-3">
               <p className="text-sm font-semibold">XMLで書き出し・読み込み</p>
               <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={exportXml}>
+                <Button type="button" variant="outline" size="sm" onClick={() => void exportXml()}>
                   <Download className="!size-4" /> XMLを書き出す
                 </Button>
                 <Button type="button" variant="outline" size="sm" onClick={() => xmlFile.current?.click()}>

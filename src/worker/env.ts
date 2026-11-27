@@ -2,6 +2,8 @@ import type { Role } from "@shared/roles";
 
 export interface Bindings {
   DB: D1Database;
+  /** 背景画像の保存先(任意)。未設定なら、画像はD1に縮小して保存する */
+  IMAGES?: R2Bucket;
   /** 初回の全体管理者作成にだけ使うトークン(未設定なら /api/setup は無効) */
   SETUP_TOKEN?: string;
   /** 物理カードPINのハッシュに混ぜる秘密値 */
