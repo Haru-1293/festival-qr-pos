@@ -1,3 +1,4 @@
+import { menuImageUrl } from "./menuImages";
 import type { CatalogResponse, PriceCutDto, PriceCutState, ProductDto, SaleMode, ProductStatus } from "@shared/api";
 import { loadSets } from "./sets";
 import { cutAmount, type PriceCutMethod, type PriceCutRule } from "@shared/pricing";
@@ -71,6 +72,7 @@ interface ProductRow {
   stock_qty: number | null;
   discountable: number;
   sort_order: number;
+  image_key: string | null;
 }
 
 /** 商品一覧(タグ・売り切れ・値下げ後の価格つき)。値下げは「割引対象外」の商品には効かない(仮定 A12) */
@@ -85,7 +87,7 @@ export async function loadProducts(
   const [{ results: rows }, { results: tagRows }] = await Promise.all([
     db
       .prepare(
-        `SELECT id, name, price, description, sale_mode, status, manual_sold_out, track_stock, stock_qty, discountable, sort_order
+        `SELECT id, name, price, description, sale_mode, status, manual_sold_out, track_stock, stock_qty, discountable, sort_order, image_key
            FROM products WHERE ${where.join(" AND ")} ORDER BY sort_order, created_at`,
       )
       .bind(shopId)
@@ -115,6 +117,7 @@ export async function loadProducts(
       salePrice: r.price === null ? null : r.price - cut,
       cutAmount: cut,
       description: r.description,
+      imageUrl: menuImageUrl(r.image_key),
       saleMode: r.sale_mode,
       status: r.status,
       manualSoldOut: r.manual_sold_out === 1,

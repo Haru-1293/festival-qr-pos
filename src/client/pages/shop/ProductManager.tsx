@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { MenuImagePicker, imageFrom, resolveImageKey, type MenuImageState } from "@/components/MenuImagePicker";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
@@ -35,6 +36,7 @@ interface Draft {
   trackStock: boolean;
   stockQty: string;
   cost: string;
+  image: MenuImageState;
 }
 const EMPTY: Draft = {
   id: null,
@@ -48,6 +50,7 @@ const EMPTY: Draft = {
   trackStock: false,
   stockQty: "",
   cost: "",
+  image: imageFrom(null),
 };
 const digits = (s: string) => s.replace(/[^0-9]/g, "");
 
@@ -90,13 +93,16 @@ export function ProductManager({ shopId }: { shopId: string }) {
       trackStock: p.trackStock,
       stockQty: p.stockQty === null ? "" : String(p.stockQty),
       cost: p.cost === null || p.cost === undefined ? "" : String(p.cost),
+      image: imageFrom(p.imageUrl),
     });
 
   const save = (e: FormEvent) => {
     e.preventDefault();
     if (!draft) return;
     void form.run(async () => {
+      const imageKey = await resolveImageKey(shopId, draft.image);
       const base = {
+        ...(imageKey === undefined ? {} : { imageKey }),
         name: draft.name,
         price: draft.price === "" ? null : Number(draft.price),
         description: draft.description || null,
@@ -221,6 +227,9 @@ export function ProductManager({ shopId }: { shopId: string }) {
               </Field>
               <Field label="原価(任意)" hint="入力すると売上の画面に粗利が出ます。空欄の商品は粗利の計算に含めません">
                 <Input inputMode="numeric" value={draft.cost} onChange={(e) => setDraft({ ...draft, cost: digits(e.target.value) })} />
+              </Field>
+              <Field label="画像(任意)" hint="メニューに表示されます。大きい画像は自動で縮小されます">
+                <MenuImagePicker value={draft.image} onChange={(image) => setDraft({ ...draft, image })} />
               </Field>
               <Field label="説明(任意)">
                 <Input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} maxLength={300} />

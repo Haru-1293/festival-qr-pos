@@ -168,6 +168,17 @@ export const adminRoutes = new Hono<AppEnv>()
       return c.json({ id }, 201);
     },
   )
+  // 店舗に登録されている店舗責任者の一覧(既存の店舗に責任者を追加する画面で使う)
+  .get("/shops/:id/managers", idParam, async (c) => {
+    const { id } = c.req.valid("param");
+    const shop = await c.env.DB.prepare("SELECT id FROM shops WHERE id = ?").bind(id).first();
+    if (!shop) throw notFound("店舗が見つかりません");
+    const { results } = await c.env.DB
+      .prepare("SELECT id, nickname, login_id, status FROM users WHERE role = 'SHOP_MANAGER' AND shop_id = ? AND status <> 'DELETED' ORDER BY created_at")
+      .bind(id)
+      .all<{ id: string; nickname: string; login_id: string | null; status: string }>();
+    return c.json({ managers: results.map((m) => ({ id: m.id, nickname: m.nickname, loginId: m.login_id, status: m.status })) });
+  })
   // 店舗責任者の登録(全体管理者が行う)
   .post(
     "/users/shop-manager",

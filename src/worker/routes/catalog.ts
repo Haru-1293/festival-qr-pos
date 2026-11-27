@@ -1,3 +1,4 @@
+import { MENU_IMAGE_MAX_BYTES, assertMenuImage, dropMenuImageIfUnused, menuImageKeySchema, menuImageUrl, saveMenuImage } from "../lib/menuImages";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { PriceCutDto, ProductDto, TagDto } from "@shared/api";
@@ -30,6 +31,8 @@ const productBase = {
   tagIds: z.array(id26).max(20),
   /** 原価(任意)。未入力(null)の商品は粗利に含めない */
   cost: costSchema.nullable().optional(),
+  /** メニュー画像(アップロード済みのキー)。なし・外すは null */
+  imageKey: menuImageKeySchema.nullable().optional(),
 };
 
 /** 販売形態と価格の整合(セット限定以外は価格が必要) */
@@ -126,6 +129,19 @@ export const catalogRoutes = new Hono<AppEnv>()
     },
   )
 
+  // ---------- メニュー画像 ----------
+  // 本文は画像そのもの(縮小済み)。返ったキーを、商品・セットの保存時に imageKey として渡す
+  .post("/:shopId/menu-images", shopParam, async (c) => {
+    const auth = requireAuth(c);
+    const { shopId } = c.req.valid("param");
+    assertShopAccess(auth, shopId);
+    const type = (c.req.header("content-type") ?? "").split(";")[0]!.trim().toLowerCase();
+    const declared = Number(c.req.header("content-length") ?? "0");
+    if (declared > MENU_IMAGE_MAX_BYTES * 4) throw badRequest("画像が大きすぎます", "IMAGE_TOO_LARGE");
+    const key = await saveMenuImage(c.env, type, new Uint8Array(await c.req.arrayBuffer()));
+    return c.json({ key, url: menuImageUrl(key) }, 201);
+  })
+
   // ---------- 商品 ----------
   .post(
     "/:shopId/products",
@@ -145,16 +161,17 @@ export const catalogRoutes = new Hono<AppEnv>()
       const shop = await db.prepare("SELECT status FROM shops WHERE id = ?").bind(shopId).first<{ status: string }>();
       if (!shop) throw notFound("店舗が見つかりません");
       await assertTagsBelongToShop(db, shopId, b.tagIds);
+      await assertMenuImage(c.env, b.imageKey);
       const id = newId();
       const now = Date.now();
       const qty = b.trackStock ? (b.stockQty ?? 0) : null;
       await db.batch([
         db
           .prepare(
-            `INSERT INTO products (id, shop_id, name, price, description, sale_mode, status, manual_sold_out, track_stock, stock_qty, discountable, sort_order, created_at, updated_at, cost)
-             VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 0, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO products (id, shop_id, name, price, description, sale_mode, status, manual_sold_out, track_stock, stock_qty, discountable, sort_order, created_at, updated_at, cost, image_key)
+             VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
-          .bind(id, shopId, b.name, b.price, b.description ?? null, b.saleMode, b.trackStock ? 1 : 0, qty, b.discountable ? 1 : 0, b.sortOrder, now, now, b.cost ?? null),
+          .bind(id, shopId, b.name, b.price, b.description ?? null, b.saleMode, b.trackStock ? 1 : 0, qty, b.discountable ? 1 : 0, b.sortOrder, now, now, b.cost ?? null, b.imageKey ?? null),
         ...[...new Set(b.tagIds)].map((t) => db.prepare("INSERT INTO product_tags (product_id, tag_id) VALUES (?, ?)").bind(id, t)),
         ...(qty && qty > 0
           ? [
@@ -186,6 +203,7 @@ export const catalogRoutes = new Hono<AppEnv>()
         sortOrder: productBase.sortOrder.optional(),
         tagIds: productBase.tagIds.optional(),
         cost: costSchema.nullable().optional(),
+        imageKey: menuImageKeySchema.nullable().optional(),
       }),
     ),
     async (c) => {
@@ -195,9 +213,9 @@ export const catalogRoutes = new Hono<AppEnv>()
       const b = c.req.valid("json");
       const db = c.env.DB;
       const cur = await db
-        .prepare("SELECT name, price, description, sale_mode, status, discountable, sort_order, cost FROM products WHERE id = ? AND shop_id = ?")
+        .prepare("SELECT name, price, description, sale_mode, status, discountable, sort_order, cost, image_key FROM products WHERE id = ? AND shop_id = ?")
         .bind(productId, shopId)
-        .first<{ name: string; price: number | null; description: string | null; sale_mode: string; status: string; discountable: number; sort_order: number; cost: number | null }>();
+        .first<{ name: string; price: number | null; description: string | null; sale_mode: string; status: string; discountable: number; sort_order: number; cost: number | null; image_key: string | null }>();
       if (!cur) throw notFound("商品が見つかりません");
       if (cur.status === "ARCHIVED" && b.status === undefined) throw badRequest("アーカイブ済みの商品は変更できません");
       const next = {
@@ -209,15 +227,17 @@ export const catalogRoutes = new Hono<AppEnv>()
         discountable: b.discountable ?? cur.discountable === 1,
         sortOrder: b.sortOrder ?? cur.sort_order,
         cost: b.cost === undefined ? cur.cost : b.cost,
+        imageKey: b.imageKey === undefined ? cur.image_key : b.imageKey,
       };
+      await assertMenuImage(c.env, b.imageKey);
       assertPriceForMode(next.saleMode, next.price);
       if (b.tagIds) await assertTagsBelongToShop(db, shopId, b.tagIds);
       await db.batch([
         db
           .prepare(
-            `UPDATE products SET name = ?, price = ?, description = ?, sale_mode = ?, status = ?, discountable = ?, sort_order = ?, cost = ?, updated_at = ? WHERE id = ? AND shop_id = ?`,
+            `UPDATE products SET name = ?, price = ?, description = ?, sale_mode = ?, status = ?, discountable = ?, sort_order = ?, cost = ?, image_key = ?, updated_at = ? WHERE id = ? AND shop_id = ?`,
           )
-          .bind(next.name, next.price, next.description, next.saleMode, next.status, next.discountable ? 1 : 0, next.sortOrder, next.cost, Date.now(), productId, shopId),
+          .bind(next.name, next.price, next.description, next.saleMode, next.status, next.discountable ? 1 : 0, next.sortOrder, next.cost, next.imageKey, Date.now(), productId, shopId),
         ...(b.tagIds
           ? [
               db.prepare("DELETE FROM product_tags WHERE product_id = ?").bind(productId),
@@ -234,6 +254,7 @@ export const catalogRoutes = new Hono<AppEnv>()
           after: { name: next.name, price: next.price, cost: next.cost, saleMode: next.saleMode, status: next.status },
         }),
       ]);
+      if (cur.image_key && cur.image_key !== next.imageKey) c.executionCtx.waitUntil(dropMenuImageIfUnused(c.env, cur.image_key));
       return c.json({ ok: true });
     },
   )

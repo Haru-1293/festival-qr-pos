@@ -183,6 +183,8 @@ export interface ProductDto {
   salePrice: number | null;
   cutAmount: number;
   description: string | null;
+  /** メニュー画像のURL。なければ null */
+  imageUrl: string | null;
   saleMode: SaleMode;
   status: ProductStatus;
   manualSoldOut: boolean;
@@ -259,6 +261,7 @@ export interface SetDto {
   salePrice: number;
   cutAmount: number;
   description: string | null;
+  imageUrl: string | null;
   status: ProductStatus;
   manualSoldOut: boolean;
   discountable: boolean;
@@ -274,6 +277,7 @@ export interface SetInput {
   name: string;
   price: number;
   description?: string | null;
+  imageKey?: string | null;
   discountable: boolean;
   sortOrder: number;
   segments: {
@@ -774,6 +778,7 @@ export interface PublicMenuItem {
   name: string;
   price: number | null;
   description: string | null;
+  imageUrl: string | null;
   soldOut: boolean;
   kind: "PRODUCT" | "SET";
 }

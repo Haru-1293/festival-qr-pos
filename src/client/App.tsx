@@ -49,6 +49,7 @@ const CardManager = lazy(() => import("@/pages/admin/CardManager").then((m) => (
 const DiscountManager = lazy(() => import("@/pages/admin/DiscountManager").then((m) => ({ default: m.DiscountManager })));
 const CallBoardPage = lazy(() => import("@/pages/display/CallBoard").then((m) => ({ default: m.CallBoardPage })));
 const CustomerHistory = lazy(() => import("@/pages/my/CustomerHome").then((m) => ({ default: m.CustomerHistory })));
+const CustomerShops = lazy(() => import("@/pages/my/CustomerShops").then((m) => ({ default: m.CustomerShops })));
 const CustomerAccount = lazy(() => import("@/pages/my/CustomerHome").then((m) => ({ default: m.CustomerAccount })));
 const CustomerHome = lazy(() => import("@/pages/my/CustomerHome").then((m) => ({ default: m.CustomerHome })));
 const BalanceInquiry = lazy(() => import("@/pages/balance/BalanceInquiry").then((m) => ({ default: m.BalanceInquiry })));
@@ -80,6 +81,7 @@ function OfflineBanner() {
 
 const CUSTOMER_NAV: NavItem[] = [
   { to: "/my", label: "ホーム", icon: Home, end: true },
+  { to: "/my/shops", label: "店舗・メニュー", icon: Store },
   { to: "/my/history", label: "利用履歴", icon: History },
   { to: "/my/account", label: "アカウント", icon: UserCog },
 ];
@@ -172,6 +174,7 @@ export default function App() {
                 }
               >
                 <Route index element={<CustomerHome />} />
+                <Route path="shops" element={<CustomerShops />} />
                 <Route path="history" element={<CustomerHistory />} />
                 <Route path="account" element={<CustomerAccount />} />
               </Route>

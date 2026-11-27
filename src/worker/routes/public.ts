@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { CallBoardDto, PublicMenuItem, PublicShopDto } from "@shared/api";
 import type { AppEnv } from "../env";
 import { notFound } from "../lib/errors";
+import { MENU_IMAGE_KEY, menuImageUrl, readMenuImage } from "../lib/menuImages";
 import { zv as zValidator } from "../lib/validate";
 
 const shopParam = zValidator("param", z.object({ shopId: z.string().length(26) }));
@@ -27,15 +28,15 @@ export const publicRoutes = new Hono<AppEnv>()
     const [products, sets] = await Promise.all([
       db
         .prepare(
-          `SELECT name, price, description, manual_sold_out, track_stock, stock_qty FROM products
+          `SELECT name, price, description, image_key, manual_sold_out, track_stock, stock_qty FROM products
             WHERE shop_id = ? AND status = 'ACTIVE' AND sale_mode <> 'SET_ONLY' AND price IS NOT NULL ORDER BY sort_order, created_at`,
         )
         .bind(shopId)
-        .all<{ name: string; price: number; description: string | null; manual_sold_out: number; track_stock: number; stock_qty: number | null }>(),
+        .all<{ name: string; price: number; description: string | null; image_key: string | null; manual_sold_out: number; track_stock: number; stock_qty: number | null }>(),
       db
-        .prepare("SELECT name, price, description, manual_sold_out FROM sets WHERE shop_id = ? AND status = 'ACTIVE' ORDER BY sort_order, created_at")
+        .prepare("SELECT name, price, description, image_key, manual_sold_out FROM sets WHERE shop_id = ? AND status = 'ACTIVE' ORDER BY sort_order, created_at")
         .bind(shopId)
-        .all<{ name: string; price: number; description: string | null; manual_sold_out: number }>(),
+        .all<{ name: string; price: number; description: string | null; image_key: string | null; manual_sold_out: number }>(),
     ]);
     const items: PublicMenuItem[] = [
       ...products.results.map((p) => ({
@@ -43,12 +44,27 @@ export const publicRoutes = new Hono<AppEnv>()
         name: p.name,
         price: p.price,
         description: p.description,
+        imageUrl: menuImageUrl(p.image_key),
         soldOut: p.manual_sold_out === 1 || (p.track_stock === 1 && (p.stock_qty ?? 0) <= 0),
       })),
-      ...sets.results.map((s) => ({ kind: "SET" as const, name: s.name, price: s.price, description: s.description, soldOut: s.manual_sold_out === 1 })),
+      ...sets.results.map((s) => ({ kind: "SET" as const, name: s.name, price: s.price, description: s.description, imageUrl: menuImageUrl(s.image_key), soldOut: s.manual_sold_out === 1 })),
     ];
     c.header("Cache-Control", "public, max-age=15");
     return c.json({ shopName: shop.display_name, items });
+  })
+  // メニュー画像(公開。キーは画像ごとに別で変わらないので、長くキャッシュする)
+  .get("/menu-images/:key", zValidator("param", z.object({ key: z.string().regex(MENU_IMAGE_KEY) })), async (c) => {
+    const { key } = c.req.valid("param");
+    const img = await readMenuImage(c.env, key);
+    if (!img) throw notFound("画像が見つかりません");
+    return new Response(img.body, {
+      headers: {
+        "content-type": img.type,
+        "cache-control": "public, max-age=86400, immutable",
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'",
+      },
+    });
   })
   // 呼び出しボード。店舗がオンにしているときだけ。番号だけを返す(最近の受け渡し済みは出さない)
   .get("/shops/:shopId/board", shopParam, async (c) => {

@@ -1,3 +1,4 @@
+import { assertMenuImage, dropMenuImageIfUnused, menuImageKeySchema } from "../lib/menuImages";
 import { Hono } from "hono";
 import { z } from "zod";
 import type { SetDto } from "@shared/api";
@@ -20,6 +21,8 @@ const setSchema = z.object({
   name: z.string().trim().min(1, "セット名を入力してください").max(60, "セット名は60文字以内にしてください"),
   price: yen,
   description: z.string().trim().max(300).nullable().optional(),
+  /** メニュー画像(アップロード済みのキー)。省略=変えない(作成時は画像なし)、null=外す */
+  imageKey: menuImageKeySchema.nullable().optional(),
   discountable: z.boolean(),
   sortOrder: z.number().int().min(0).max(100000),
   segments: z
@@ -82,15 +85,16 @@ export const setRoutes = new Hono<AppEnv>()
     const b = c.req.valid("json");
     const db = c.env.DB;
     await assertSegments(db, shopId, b);
+    await assertMenuImage(c.env, b.imageKey);
     const id = newId();
     const now = Date.now();
     await db.batch([
       db
         .prepare(
-          `INSERT INTO sets (id, shop_id, name, price, description, status, manual_sold_out, discountable, sort_order, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, 'ACTIVE', 0, ?, ?, ?, ?)`,
+          `INSERT INTO sets (id, shop_id, name, price, description, image_key, status, manual_sold_out, discountable, sort_order, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', 0, ?, ?, ?, ?)`,
         )
-        .bind(id, shopId, b.name, b.price, b.description ?? null, b.discountable ? 1 : 0, b.sortOrder, now, now),
+        .bind(id, shopId, b.name, b.price, b.description ?? null, b.imageKey ?? null, b.discountable ? 1 : 0, b.sortOrder, now, now),
       ...segmentStmts(db, id, b, []),
       bumpCatalogStmt(db, shopId),
       auditStmt(db, { actor: auth, action: "set.create", targetType: "set", targetId: id, after: { name: b.name, price: b.price, segments: b.segments.length } }),
@@ -106,19 +110,21 @@ export const setRoutes = new Hono<AppEnv>()
     const b = c.req.valid("json");
     const db = c.env.DB;
     const cur = await db
-      .prepare("SELECT name, price FROM sets WHERE id = ? AND shop_id = ? AND status <> 'ARCHIVED'")
+      .prepare("SELECT name, price, image_key FROM sets WHERE id = ? AND shop_id = ? AND status <> 'ARCHIVED'")
       .bind(setId, shopId)
-      .first<{ name: string; price: number }>();
+      .first<{ name: string; price: number; image_key: string | null }>();
     if (!cur) throw notFound("セットが見つかりません");
     await assertSegments(db, shopId, b);
+    await assertMenuImage(c.env, b.imageKey);
+    const nextImage = b.imageKey === undefined ? cur.image_key : b.imageKey;
     const { results: old } = await db.prepare("SELECT id FROM set_segments WHERE set_id = ?").bind(setId).all<{ id: string }>();
     const oldIds = old.map((o) => o.id);
     for (const g of b.segments) if (g.id && !oldIds.includes(g.id)) throw badRequest("このセットの内訳ではありません");
     const now = Date.now();
     await db.batch([
       db
-        .prepare("UPDATE sets SET name = ?, price = ?, description = ?, discountable = ?, sort_order = ?, updated_at = ? WHERE id = ? AND shop_id = ?")
-        .bind(b.name, b.price, b.description ?? null, b.discountable ? 1 : 0, b.sortOrder, now, setId, shopId),
+        .prepare("UPDATE sets SET name = ?, price = ?, description = ?, image_key = ?, discountable = ?, sort_order = ?, updated_at = ? WHERE id = ? AND shop_id = ?")
+        .bind(b.name, b.price, b.description ?? null, nextImage, b.discountable ? 1 : 0, b.sortOrder, now, setId, shopId),
       ...segmentStmts(db, setId, b, oldIds),
       bumpCatalogStmt(db, shopId),
       auditStmt(db, {
@@ -130,6 +136,7 @@ export const setRoutes = new Hono<AppEnv>()
         after: { name: b.name, price: b.price, segments: b.segments.length },
       }),
     ]);
+    if (cur.image_key && cur.image_key !== nextImage) c.executionCtx.waitUntil(dropMenuImageIfUnused(c.env, cur.image_key));
     return c.json({ ok: true });
   })
 

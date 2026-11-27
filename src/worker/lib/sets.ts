@@ -1,3 +1,4 @@
+import { menuImageUrl } from "./menuImages";
 import type { SetDto, SetItemDto, SetSegmentDto, SetUnavailableReason, ProductStatus } from "@shared/api";
 import { cutAmount, type PriceCutRule } from "@shared/pricing";
 
@@ -6,6 +7,7 @@ interface SetRow {
   name: string;
   price: number;
   description: string | null;
+  image_key: string | null;
   status: ProductStatus;
   manual_sold_out: number;
   discountable: number;
@@ -66,7 +68,7 @@ export async function loadSets(
   if (opts.posOnly) where.push("status = 'ACTIVE'");
   const [{ results: sets }, { results: segs }, { results: items }] = await Promise.all([
     db
-      .prepare(`SELECT id, name, price, description, status, manual_sold_out, discountable, sort_order FROM sets WHERE ${where.join(" AND ")} ORDER BY sort_order, created_at`)
+      .prepare(`SELECT id, name, price, description, image_key, status, manual_sold_out, discountable, sort_order FROM sets WHERE ${where.join(" AND ")} ORDER BY sort_order, created_at`)
       .bind(shopId)
       .all<SetRow>(),
     db
@@ -119,6 +121,7 @@ export async function loadSets(
       salePrice: s.price - down,
       cutAmount: down,
       description: s.description,
+      imageUrl: menuImageUrl(s.image_key),
       status: s.status,
       manualSoldOut: s.manual_sold_out === 1,
       discountable: s.discountable === 1,
