@@ -1,3 +1,5 @@
+import { passwordResetRoutes } from "./routes/passwordReset";
+import { adminMailRoutes } from "./routes/adminMail";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
@@ -45,11 +47,13 @@ const api = new Hono<AppEnv>()
   .use("*", originCheck)
   .use("*", sessionLoader)
   .use("*", emergencyStop)
+  .route("/auth/password-reset", passwordResetRoutes)
   .route("/auth", authRoutes)
   .route("/setup", setupRoutes)
   .route("/settings", settingsRoutes)
   .route("/print-templates", printTemplateRoutes)
   .route("/admin/system", systemRoutes)
+  .route("/admin/mail", adminMailRoutes)
   .route("/admin", adminRoutes)
   .route("/shops", shopRoutes)
   .route("/wallet", walletRoutes)

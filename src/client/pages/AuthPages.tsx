@@ -50,7 +50,7 @@ const PORTALS: Record<Portal, { role: Role; title: string; description: string; 
 /** 役割ごとのログイン画面。ID・パスワードに加えて、店員・受付はQRでも入れる。違う役割のアカウントでは入れない */
 export function PortalLoginPage({ portal }: { portal: Portal }) {
   const cfg = PORTALS[portal];
-  const { me, setMe, logout } = useAuth();
+  const { me, setMe, logout, settings } = useAuth();
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
@@ -158,7 +158,13 @@ export function PortalLoginPage({ portal }: { portal: Portal }) {
         <Link to="/" className="text-muted-foreground underline-offset-2 hover:underline">
           トップページへ
         </Link>
-        <p className="text-xs text-muted-foreground">パスワードを忘れた場合は、{portal === "customer" ? "受付または運営" : portal === "admin" ? "他の全体管理者" : "運営(または店舗責任者)"}にお声がけください。</p>
+        {(portal === "customer" && settings.passwordReset) || (portal === "admin" && settings.adminPasswordReset) ? (
+          <Link to={portal === "admin" ? "/admin/forgot-password" : "/forgot-password"} className="text-muted-foreground underline-offset-2 hover:underline">
+            パスワードを忘れた方
+          </Link>
+        ) : (
+          <p className="text-xs text-muted-foreground">パスワードを忘れた場合は、{portal === "customer" ? "受付または運営" : portal === "admin" ? "他の全体管理者" : "運営(または店舗責任者)"}にお声がけください。</p>
+        )}
         {needsSetup && (
           <Link to="/setup" className="text-xs text-amber-700 underline">
             初回セットアップ(全体管理者の作成)
@@ -243,6 +249,7 @@ export function SetupPage() {
   const [loginId, setLoginId] = useState("");
   const [nickname, setNickname] = useState("");
   const [password, setPassword] = useState("");
+  const [recoveryEmail, setRecoveryEmail] = useState("");
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   const { pending, error, run } = useAction();
 
@@ -259,7 +266,7 @@ export function SetupPage() {
     void run(async () => {
       setMe(
         await api<MeResponse>("/setup/admin", {
-          body: { loginId, password, nickname },
+          body: { loginId, password, nickname, ...(recoveryEmail.trim() ? { recoveryEmail: recoveryEmail.trim() } : {}) },
           headers: { "x-setup-token": setupToken },
         }),
       );
@@ -292,11 +299,118 @@ export function SetupPage() {
         <Field label="パスワード" hint="8文字以上">
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength={8} required />
         </Field>
+        <Field label="パスワード再設定用のメールアドレス(任意)" hint="パスワードを忘れたときの再設定URLの送り先です。あとから管理画面でも登録・変更できます">
+          <Input type="email" value={recoveryEmail} onChange={(e) => setRecoveryEmail(e.target.value)} autoComplete="email" inputMode="email" />
+        </Field>
         <ErrorText message={error} />
         <Button type="submit" size="lg" disabled={pending}>
           {pending ? "作成中…" : "全体管理者を作成"}
         </Button>
       </form>
+    </AuthFrame>
+  );
+}
+
+/** パスワード再設定の依頼。登録のメールアドレス(全体管理者はログインID)を入れると、再設定URLをメールで送る */
+export function ForgotPasswordPage({ admin = false }: { admin?: boolean }) {
+  const [loginId, setLoginId] = useState("");
+  const [sent, setSent] = useState(false);
+  const { pending, error, run } = useAction();
+  const { settings } = useAuth();
+  const available = admin ? settings.adminPasswordReset : settings.passwordReset;
+  const back = admin ? "/admin/login" : "/login";
+  if (!available) {
+    return (
+      <AuthFrame title="パスワードの再設定">
+        <p className="text-sm">いま、メールでのパスワード再設定は使えません。{admin ? "他の全体管理者" : "受付または運営"}にお声がけください。</p>
+        <Link to={back} className="text-center text-sm font-semibold underline">
+          ログインへ戻る
+        </Link>
+      </AuthFrame>
+    );
+  }
+  return (
+    <AuthFrame
+      title="パスワードの再設定"
+      description={admin ? "ログインIDを入れると、登録してある再設定用のメールアドレスにURLを送ります" : "登録したメールアドレスに、再設定用のURLを送ります"}
+    >
+      {sent ? (
+        <p className="rounded-lg bg-secondary px-3 py-3 text-sm">
+          {admin ? "そのIDに再設定用のメールアドレスが登録されていれば、" : "そのメールアドレスが登録されていれば、"}
+          再設定用のURLを送りました。URLは送信から<strong>1時間</strong>だけ有効です。届かないときは迷惑メールフォルダもご確認ください。
+        </p>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(async () => {
+              await api("/auth/password-reset/request", { body: { loginId } });
+              setSent(true);
+            });
+          }}
+          className="flex flex-col gap-4"
+        >
+          <Field label={admin ? "ログインID" : "メールアドレス"}>
+            <Input value={loginId} onChange={(e) => setLoginId(e.target.value)} autoCapitalize="none" inputMode={admin ? "text" : "email"} autoComplete="username" required />
+          </Field>
+          <ErrorText message={error} />
+          <Button type="submit" size="lg" disabled={pending}>
+            {pending ? "送信中…" : "再設定のメールを送る"}
+          </Button>
+        </form>
+      )}
+      <Link to={back} className="text-center text-sm text-muted-foreground underline-offset-2 hover:underline">
+        ログインへ戻る
+      </Link>
+    </AuthFrame>
+  );
+}
+
+/** メールのURLから開く、新しいパスワードの設定画面 */
+export function ResetPasswordPage() {
+  const token = new URLSearchParams(window.location.search).get("token") ?? "";
+  const [password, setPassword] = useState("");
+  const [again, setAgain] = useState("");
+  const [done, setDone] = useState(false);
+  const { pending, error, run } = useAction();
+  const [mismatch, setMismatch] = useState(false);
+  return (
+    <AuthFrame title="新しいパスワードの設定">
+      {done ? (
+        <>
+          <p className="rounded-lg bg-secondary px-3 py-3 text-sm">パスワードを変更しました。新しいパスワードでログインしてください。</p>
+          <Button asChild size="lg">
+            <Link to="/login">ログインへ</Link>
+          </Button>
+        </>
+      ) : !token ? (
+        <p className="text-sm">URLが正しくありません。メールのURLをそのまま開いてください。</p>
+      ) : (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (password !== again) return setMismatch(true);
+            setMismatch(false);
+            void run(async () => {
+              await api("/auth/password-reset/confirm", { body: { token, newPassword: password } });
+              setDone(true);
+            });
+          }}
+          className="flex flex-col gap-4"
+        >
+          <Field label="新しいパスワード" hint="8文字以上">
+            <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" minLength={8} required />
+          </Field>
+          <Field label="新しいパスワード(確認)">
+            <Input type="password" value={again} onChange={(e) => setAgain(e.target.value)} autoComplete="new-password" minLength={8} required />
+          </Field>
+          <ErrorText message={mismatch ? "確認のパスワードが一致しません" : error} />
+          <Button type="submit" size="lg" disabled={pending}>
+            {pending ? "変更中…" : "パスワードを変更"}
+          </Button>
+          <p className="text-xs text-muted-foreground">変更すると、ほかの端末のログインはすべて終わります。</p>
+        </form>
+      )}
     </AuthFrame>
   );
 }

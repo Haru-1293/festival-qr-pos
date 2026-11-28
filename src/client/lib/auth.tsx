@@ -12,6 +12,10 @@ interface PublicSettings {
   globalExpiry: string | null;
   /** 公開中の利用規約・プライバシーポリシーの版(未公開は null) */
   legal: { TERMS: number | null; PRIVACY: number | null };
+  /** お客様のパスワード再設定メールを使えるか(オン + メール送信の設定済み) */
+  passwordReset: boolean;
+  /** 全体管理者のパスワード再設定メールを使えるか(メール送信の設定済み) */
+  adminPasswordReset: boolean;
 }
 
 interface AuthState {
@@ -26,7 +30,7 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-const FALLBACK: PublicSettings = { currency: DEFAULT_CURRENCY, festivalName: "学園祭", emergency: { on: false, message: "" }, globalExpiry: null, legal: { TERMS: null, PRIVACY: null } };
+const FALLBACK: PublicSettings = { currency: DEFAULT_CURRENCY, festivalName: "学園祭", emergency: { on: false, message: "" }, globalExpiry: null, legal: { TERMS: null, PRIVACY: null }, passwordReset: false, adminPasswordReset: false };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<MeResponse | null>(null);

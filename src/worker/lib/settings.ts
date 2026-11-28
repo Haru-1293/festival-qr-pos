@@ -7,6 +7,8 @@ export const SETTING_KEYS = {
   operations: "operations",
   expiry: "expiry",
   globalExpiry: "expiry.global",
+  passwordReset: "password_reset.enabled",
+  publicBaseUrl: "mail.public_base_url",
 } as const;
 
 export const DEFAULT_OPERATIONS: OperationSettings = { closingMode: "DAY", qrTtlSeconds: 300, paymentSessionSeconds: 300 };

@@ -8,7 +8,7 @@ import { conflict, forbidden, notFound } from "../lib/errors";
 import { newId } from "../lib/ids";
 import { buildSessionStmts, deviceLabelFrom, writeSessionCookie } from "../lib/session";
 import { isUniqueViolation } from "../lib/users";
-import { nicknameSchema, passwordSchema, staffLoginIdSchema } from "../lib/validation";
+import { emailSchema, nicknameSchema, passwordSchema, staffLoginIdSchema } from "../lib/validation";
 import { loadMe } from "./auth";
 
 async function adminExists(db: D1Database): Promise<boolean> {
@@ -24,14 +24,14 @@ export const setupRoutes = new Hono<AppEnv>()
   .get("/status", async (c) => c.json({ needsSetup: !(await adminExists(c.env.DB)) }))
   .post(
     "/admin",
-    zValidator("json", z.object({ loginId: staffLoginIdSchema, password: passwordSchema, nickname: nicknameSchema })),
+    zValidator("json", z.object({ loginId: staffLoginIdSchema, password: passwordSchema, nickname: nicknameSchema, recoveryEmail: emailSchema.optional() })),
     async (c) => {
       const expected = c.env.SETUP_TOKEN;
       if (!expected) throw notFound();
       const given = c.req.header("x-setup-token") ?? "";
       if (!timingSafeEqualStr(given, expected)) throw forbidden("セットアップトークンが違います", "BAD_SETUP_TOKEN");
 
-      const { loginId, password, nickname } = c.req.valid("json");
+      const { loginId, password, nickname, recoveryEmail } = c.req.valid("json");
       const db = c.env.DB;
       const id = newId();
       const passwordHash = await hashPassword(password);
@@ -40,11 +40,11 @@ export const setupRoutes = new Hono<AppEnv>()
         // 「管理者がまだいない」条件を INSERT と同じ文で判定し、同時実行でも2人作られないようにする
         const res = await db
           .prepare(
-            `INSERT INTO users (id, role, login_id, password_hash, nickname, status, created_at, created_by)
-             SELECT ?, 'ADMIN', ?, ?, ?, 'ACTIVE', ?, ?
+            `INSERT INTO users (id, role, login_id, password_hash, nickname, status, created_at, created_by, recovery_email)
+             SELECT ?, 'ADMIN', ?, ?, ?, 'ACTIVE', ?, ?, ?
               WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'ADMIN')`,
           )
-          .bind(id, loginId, passwordHash, nickname, Date.now(), id)
+          .bind(id, loginId, passwordHash, nickname, Date.now(), id, recoveryEmail ?? null)
           .run();
         changes = res.meta.changes ?? 0;
       } catch (e) {

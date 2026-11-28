@@ -15,7 +15,7 @@ import { endOfDayJst } from "../lib/expiry";
 export const RESET_PHRASE = "全データを削除";
 
 /** 全データ削除で残すもの: 設定・規約、全体管理者のアカウント(とそのログイン)。ほかは監査ログも含めてすべて消す */
-const KEEP_TABLES = new Set(["settings", "legal_documents", "print_templates", "users", "sessions", "d1_migrations"]);
+const KEEP_TABLES = new Set(["settings", "mail_accounts", "legal_documents", "print_templates", "users", "sessions", "d1_migrations"]);
 
 const kindSchema = z.object({ kind: z.enum(["TERMS", "PRIVACY"]) });
 
