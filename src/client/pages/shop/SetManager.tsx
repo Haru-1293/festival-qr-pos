@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { MenuImagePicker, imageFrom, resolveImageKey, type MenuImageState } from "@/components/MenuImagePicker";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
@@ -167,8 +168,8 @@ export function SetManager({ shopId }: { shopId: string }) {
             <Field label="画像(任意)" hint="メニューに表示されます。大きい画像は自動で縮小されます">
               <MenuImagePicker value={draft.image} onChange={(image) => setDraft({ ...draft, image })} />
             </Field>
-            <Field label="説明(任意)">
-              <Input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} maxLength={300} />
+            <Field label="説明(任意)" hint="メニューに表示されます(500文字まで。改行できます)">
+              <Textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} maxLength={500} rows={3} className="min-h-20" />
             </Field>
             <label className="flex items-center gap-2 text-sm font-medium">
               <Checkbox checked={draft.discountable} onCheckedChange={(c) => setDraft({ ...draft, discountable: c === true })} />

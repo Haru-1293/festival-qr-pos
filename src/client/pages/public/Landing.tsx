@@ -50,7 +50,7 @@ export function LandingPage() {
           </h2>
           {shops === null && <p className="text-sm text-muted-foreground">読み込み中…</p>}
           {shops?.length === 0 && <p className="text-sm text-muted-foreground">まだ店舗が登録されていません</p>}
-          <div className="grid gap-3 md:grid-cols-2">{shops?.map((s) => <ShopMenu key={s.id} shop={s} />)}</div>
+          <div className="grid items-start gap-3 md:grid-cols-2">{shops?.map((s) => <ShopMenu key={s.id} shop={s} />)}</div>
         </section>
 
         <section className="rounded-2xl bg-card p-4 text-sm text-muted-foreground shadow-sm">

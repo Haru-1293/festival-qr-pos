@@ -110,6 +110,30 @@ expect "公開メニューに画像" "$URL4" "$(python3 -I -c "import json;d=jso
 req $ALICE GET /api/public/shops; check "利用者も店舗一覧を取れる" 200
 req $ALICE GET /api/public/shops/$SA/menu; check "利用者もメニューを取れる" 200
 
+echo "== 店舗の紹介文 =="
+req $MGR PUT /api/shops/$SA/description '{"description":"看板は大盛り焼きそば。\n場所: 3年A組"}'; check "紹介文を保存" 200
+req $MGR GET /api/shops/$SA/description; expect "紹介文を取得" "看板は大盛り焼きそば。
+場所: 3年A組" "$(jget "['description']")"
+req $MGRB PUT /api/shops/$SA/description '{"description":"x"}'; check "他店の責任者は不可" 403
+req $CLERK PUT /api/shops/$SA/description '{"description":"x"}'; check "店員は不可" 403
+req $MGR PUT /api/shops/$SA/description "{\"description\":\"$(python3 -c 'print("あ"*501)')\"}"; check "501文字は不可" 400
+req $ANON GET /api/public/shops; expect "公開の店舗一覧に紹介文" "看板は大盛り焼きそば。
+場所: 3年A組" "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print([s for s in d['shops'] if s['id']=='$SA'][0]['description'])")"
+req $MGR PUT /api/shops/$SA/description '{"description":""}'; check "空にして消す" 200
+req $ANON GET /api/public/shops; expect "空は null" None "$(python3 -I -c "import json;d=json.load(open('$TMP/body'));print([s for s in d['shops'] if s['id']=='$SA'][0]['description'])")"
+
+echo "== メニューの説明(500文字・改行) =="
+D500=$(python3 -c 'print("あ"*250+"\\n"+"い"*249)')
+req $MGR PATCH /api/catalog/$SA/products/$P1 "{\"description\":\"$D500\"}"; check "500文字の説明" 200
+req $MGR PATCH /api/catalog/$SA/products/$P1 "{\"description\":\"$(python3 -c 'print("あ"*501)')\"}"; check "501文字は不可" 400
+
+echo "== 在庫の設定・増減(ADJUST) =="
+req $MGR POST /api/catalog/$SA/products '{"name":"在庫品","price":100,"saleMode":"BOTH","discountable":true,"sortOrder":1,"tagIds":[],"trackStock":true,"stockQty":10}'; PS=$(jget "['id']")
+req $MGR POST /api/catalog/$SA/products/$PS/stock '{"delta":15,"reason":"ADJUST","expectedQty":10}'; check "20に設定(+10 → 差分)" 200
+req $MGR POST /api/catalog/$SA/products/$PS/stock '{"delta":-8,"reason":"ADJUST","expectedQty":10}'; check "残数が違えば拒否" 409
+req $MGR POST /api/catalog/$SA/products/$PS/stock '{"delta":-5,"reason":"ADJUST","expectedQty":25}'; check "20に設定(25 → 20)" 200
+expect "残数20" 20 "$(jget "['stockQty']")"
+
 echo
 echo "pass=$pass fail=$fail"
 [ $fail -eq 0 ]

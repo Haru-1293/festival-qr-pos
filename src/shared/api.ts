@@ -771,6 +771,8 @@ export interface CallBoardDto {
 export interface PublicShopDto {
   id: string;
   name: string;
+  /** 店舗の紹介文 */
+  description: string | null;
   callBoard: boolean;
 }
 

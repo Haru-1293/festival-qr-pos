@@ -15,10 +15,10 @@ const shopParam = zValidator("param", z.object({ shopId: z.string().length(26) }
 export const publicRoutes = new Hono<AppEnv>()
   .get("/shops", async (c) => {
     const { results } = await c.env.DB
-      .prepare("SELECT id, display_name, use_call_board FROM shops WHERE status = 'ACTIVE' ORDER BY sort_order, display_name")
-      .all<{ id: string; display_name: string; use_call_board: number }>();
+      .prepare("SELECT id, display_name, description, use_call_board FROM shops WHERE status = 'ACTIVE' ORDER BY sort_order, display_name")
+      .all<{ id: string; display_name: string; description: string | null; use_call_board: number }>();
     c.header("Cache-Control", "public, max-age=30");
-    return c.json({ shops: results.map((s) => ({ id: s.id, name: s.display_name, callBoard: s.use_call_board === 1 }) satisfies PublicShopDto) });
+    return c.json({ shops: results.map((s) => ({ id: s.id, name: s.display_name, description: s.description, callBoard: s.use_call_board === 1 }) satisfies PublicShopDto) });
   })
   .get("/shops/:shopId/menu", shopParam, async (c) => {
     const { shopId } = c.req.valid("param");

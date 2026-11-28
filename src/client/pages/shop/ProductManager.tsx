@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { MenuImagePicker, imageFrom, resolveImageKey, type MenuImageState } from "@/components/MenuImagePicker";
+import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useAction } from "@/lib/useAction";
@@ -52,6 +53,18 @@ const EMPTY: Draft = {
   cost: "",
   image: imageFrom(null),
 };
+/** 在庫の入力を解釈する。+N/-N は増減、数字だけなら設定(N個にする)。結果が負になる入力は不可 */
+export function parseStockInput(raw: string, current: number): { delta: number; reason: "RESTOCK" | "DISCARD" | "ADJUST"; target: number } | { error: string } {
+  const m = /^([+\-＋－])?(\d{1,7})$/.exec(raw.trim().replace(/[０-９]/g, (c) => String(c.charCodeAt(0) - 0xfee0)).replace(/\s+/g, ""));
+  if (!m) return { error: "「+5」「-3」「20」のように入力してください" };
+  const n = Number(m[2]);
+  if (m[1] === "+" || m[1] === "＋") return { delta: n, reason: "RESTOCK", target: current + n };
+  if (m[1] === "-" || m[1] === "－") {
+    if (n > current) return { error: `残数(${current}個)より多くは減らせません` };
+    return { delta: -n, reason: "DISCARD", target: current - n };
+  }
+  return { delta: n - current, reason: "ADJUST", target: n };
+}
 const digits = (s: string) => s.replace(/[^0-9]/g, "");
 
 /** 店舗責任者の商品管理。登録・編集・タグ・在庫・アーカイブ。変更はレジ画面へすぐ反映される */
@@ -146,20 +159,18 @@ export function ProductManager({ shopId }: { shopId: string }) {
     });
   };
 
+  /** 在庫の入力: 「+5」「-3」は増減、「5」だけならその数に設定する(全角の+−も可) */
   const adjustStock = async (p: ProductDto) => {
-    const v = await prompt(`${p.name} の残数は ${p.stockQty} です。増減を入力してください(例: 追加は 10、廃棄は -3)`, { title: "在庫を増減する", placeholder: "10 / -3", action: "次へ" });
+    const v = await prompt(`${p.name} の残数は ${p.stockQty} です。\n「+5」で5個追加、「-3」で3個減らす、「20」だけならちょうど20個に設定します`, { title: "在庫を変更する", placeholder: "+5 / -3 / 20", action: "次へ" });
     if (v === null || v.trim() === "") return;
-    const delta = Number(v);
-    if (!Number.isInteger(delta) || delta === 0) return void (await notify("0以外の整数で入力してください", "入力を確認してください"));
-    const note = (await prompt("理由(任意。例: 追加で仕込んだ / 落とした)", { title: "理由", action: "記録する" })) ?? undefined;
+    const parsed = parseStockInput(v, p.stockQty ?? 0);
+    if ("error" in parsed) return void (await notify(parsed.error, "入力を確認してください"));
+    const { delta, reason, target } = parsed;
+    if (delta === 0) return void (await notify(`残数はすでに ${target} 個です`, "変更なし"));
+    const note = (await prompt("理由(任意。例: 追加で仕込んだ / 落とした / 数え直した)", { title: "理由", action: "記録する" })) ?? undefined;
     void row.run(async () => {
       await api(`/catalog/${shopId}/products/${p.id}/stock`, {
-        body: {
-          delta,
-          reason: delta > 0 ? "RESTOCK" : "DISCARD",
-          expectedQty: p.stockQty,
-          note: note || undefined,
-        },
+        body: { delta, reason, expectedQty: p.stockQty, note: note || undefined },
       });
       await load();
     });
@@ -231,8 +242,8 @@ export function ProductManager({ shopId }: { shopId: string }) {
               <Field label="画像(任意)" hint="メニューに表示されます。大きい画像は自動で縮小されます">
                 <MenuImagePicker value={draft.image} onChange={(image) => setDraft({ ...draft, image })} />
               </Field>
-              <Field label="説明(任意)">
-                <Input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} maxLength={300} />
+              <Field label="説明(任意)" hint="メニューに表示されます(500文字まで。改行できます)">
+                <Textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} maxLength={500} rows={3} className="min-h-20" />
               </Field>
               {tags.filter((t) => t.active).length > 0 && (
                 <Field label="タグ">

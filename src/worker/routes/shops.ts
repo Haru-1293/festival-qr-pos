@@ -44,6 +44,27 @@ export const shopRoutes = new Hono<AppEnv>()
     if ((res[0].meta.changes ?? 0) === 0) throw notFound("店舗が見つかりません");
     return c.json({ ok: true });
   })
+  // 店舗の紹介文(お客様のメニュー画面に出る)
+  .get("/:shopId/description", shopParam, async (c) => {
+    const auth = requireAuth(c);
+    const { shopId } = c.req.valid("param");
+    assertShopAccess(auth, shopId);
+    const r = await c.env.DB.prepare("SELECT description FROM shops WHERE id = ?").bind(shopId).first<{ description: string | null }>();
+    if (!r) throw notFound("店舗が見つかりません");
+    return c.json({ description: r.description ?? "" });
+  })
+  .put("/:shopId/description", shopParam, zValidator("json", z.object({ description: z.string().trim().max(500, "紹介文は500文字以内にしてください") })), async (c) => {
+    const auth = requireAuth(c);
+    const { shopId } = c.req.valid("param");
+    assertShopAccess(auth, shopId);
+    const { description } = c.req.valid("json");
+    const res = await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE shops SET description = ? WHERE id = ?").bind(description || null, shopId),
+      auditStmt(c.env.DB, { actor: auth, action: "shop.description", targetType: "shop", targetId: shopId, after: { length: description.length } }),
+    ]);
+    if ((res[0].meta.changes ?? 0) === 0) throw notFound("店舗が見つかりません");
+    return c.json({ ok: true });
+  })
   // 店舗名と変更履歴。店舗責任者(自店舗)と全体管理者が見られる
   .get("/:shopId/name", shopParam, async (c) => {
     const auth = requireAuth(c);

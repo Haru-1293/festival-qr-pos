@@ -20,7 +20,7 @@ const yen = z.number().int("金額は整数で入力してください").min(0, 
 const setSchema = z.object({
   name: z.string().trim().min(1, "セット名を入力してください").max(60, "セット名は60文字以内にしてください"),
   price: yen,
-  description: z.string().trim().max(300).nullable().optional(),
+  description: z.string().trim().max(500).nullable().optional(),
   /** メニュー画像(アップロード済みのキー)。省略=変えない(作成時は画像なし)、null=外す */
   imageKey: menuImageKeySchema.nullable().optional(),
   discountable: z.boolean(),

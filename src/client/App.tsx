@@ -27,7 +27,8 @@ import {
   Wallet,
 } from "lucide-react";
 import { lazy, Suspense, useState, type ReactNode } from "react";
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation } from "react-router-dom";
+import { cn } from "@/lib/utils";
 import { ConsoleLayout, Page, type NavItem } from "@/components/layout/ConsoleLayout";
 import { RoleGate } from "@/components/layout/RoleGate";
 import { AuthProvider, useAuth } from "@/lib/auth";
@@ -144,6 +145,20 @@ function ReceptionPages() {
   const onBalance = pathname.startsWith("/reception/balance");
   return (
     <Page width="md">
+      {/* メニューを開かなくても切り替えられるタブ(スマホ・タブレットの受付用) */}
+      <nav className="mb-3 grid grid-cols-3 gap-1 rounded-xl bg-muted p-1" aria-label="受付の画面">
+        {RECEPTION_NAV.map((n) => (
+          <NavLink
+            key={n.to}
+            to={n.to}
+            end={n.end}
+            className={({ isActive }) => cn("flex items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-sm font-bold", isActive ? "bg-card text-primary shadow-sm" : "text-muted-foreground")}
+          >
+            <n.icon className="size-4 shrink-0" />
+            <span className="truncate">{n.label.split("・")[0]}</span>
+          </NavLink>
+        ))}
+      </nav>
       <div className={onCash || onBalance ? "hidden" : ""}>
         <ChargePanel onChanged={() => setRefreshKey((k) => k + 1)} />
       </div>

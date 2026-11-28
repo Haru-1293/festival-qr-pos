@@ -24,7 +24,7 @@ const costSchema = z.number().int("原価は整数で入力してください").
 const productBase = {
   name: z.string().trim().min(1, "商品名を入力してください").max(60, "商品名は60文字以内にしてください"),
   price: priceSchema.nullable(),
-  description: z.string().trim().max(300).nullable().optional(),
+  description: z.string().trim().max(500).nullable().optional(),
   saleMode: saleModeSchema,
   discountable: z.boolean(),
   sortOrder: z.number().int().min(0).max(100000),

@@ -5,6 +5,7 @@ import type { ShopNameHistoryItem, ShopOptions } from "@shared/api";
 import { ErrorText } from "@/components/Shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { useAuth } from "@/lib/auth";
 import { useConfirm } from "@/lib/confirm";
 import { formatDateTime } from "@/lib/utils";
@@ -94,6 +95,50 @@ function ShopNameCard({ shopId }: { shopId: string }) {
   );
 }
 
+/** 店舗の紹介文(お客様のメニュー画面の店舗名の下に出る) */
+function ShopDescriptionCard({ shopId }: { shopId: string }) {
+  const [saved, setSaved] = useState("");
+  const [text, setText] = useState("");
+  const [note, setNote] = useState<string | null>(null);
+  const act = useAction();
+  useEffect(() => {
+    api<{ description: string }>(`/shops/${shopId}/description`)
+      .then((r) => {
+        setSaved(r.description);
+        setText(r.description);
+      })
+      .catch(() => undefined);
+  }, [shopId]);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>店舗の紹介文</CardTitle>
+        <CardDescription>お客様のメニュー画面の、店舗名の下に表示されます(例: 看板メニュー、場所、アレルギーの注意)。</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <Textarea value={text} onChange={(e) => setText(e.target.value)} maxLength={500} rows={4} aria-label="店舗の紹介文" />
+        <div className="flex items-center gap-3">
+          <Button
+            disabled={act.pending || text.trim() === saved}
+            onClick={() =>
+              void act.run(async () => {
+                await api(`/shops/${shopId}/description`, { method: "PUT", body: { description: text } });
+                setSaved(text.trim());
+                setNote("保存しました");
+              })
+            }
+          >
+            保存
+          </Button>
+          <span className="text-xs text-muted-foreground">{text.length} / 500文字</span>
+          {note && <span className="text-sm font-medium text-secondary-foreground">{note}</span>}
+        </div>
+        <ErrorText message={act.error} />
+      </CardContent>
+    </Card>
+  );
+}
+
 /** 店舗のオプション設定。注文ステータス(調理中・提供可能)と、お客様の呼び出しボード */
 export function ShopSettings({ shopId }: { shopId: string }) {
   const [opts, setOpts] = useState<ShopOptions | null>(null);
@@ -118,6 +163,7 @@ export function ShopSettings({ shopId }: { shopId: string }) {
   return (
     <div className="flex flex-col gap-4">
       <ShopNameCard shopId={shopId} />
+      <ShopDescriptionCard shopId={shopId} />
       <Card>
         <CardHeader>
           <CardTitle>注文ステータスと呼び出し</CardTitle>
